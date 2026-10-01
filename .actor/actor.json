@@ -1,0 +1,19 @@
+{
+    "$schema": "https://apify.com/schemas/v1/actor.ide.json",
+    "actorSpecification": 1,
+    "name": "getting-started-python-crawlee-beautifulsoup",
+    "title": "Getting started with Python Crawlee and BeautifulSoup",
+    "description": "Scrapes titles of websites using Crawlee and BeautifulSoup.",
+    "version": "0.0",
+    "buildTag": "latest",
+    "meta": {
+        "templateId": "python-crawlee-beautifulsoup",
+        "generatedBy": "<FILL-IN-MODEL>"
+    },
+    "inputSchema": "./input_schema.json",
+    "outputSchema": "./output_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json"
+    },
+    "dockerfile": "../Dockerfile"
+}
