@@ -14,7 +14,7 @@ router = Router[BeautifulSoupCrawlingContext]()
 
 
 # ============================================================
-# YOUR SCHOLARSHIP PROFILE
+# YOUR PROFILE
 # ============================================================
 
 STUDENT_PROFILE = {
@@ -25,6 +25,7 @@ STUDENT_PROFILE = {
     "cgpa_scale": 10.0,
     "degree": "Master",
     "field": "Computer Science",
+
     "field_keywords": [
         "computer science",
         "computer sciences",
@@ -40,6 +41,7 @@ STUDENT_PROFILE = {
         "informatics",
         "computing",
     ],
+
     "preferred_destinations": [
         "Germany",
         "France",
@@ -61,51 +63,22 @@ STUDENT_PROFILE = {
 }
 
 
-# ============================================================
-# SETTINGS
-# ============================================================
-
 MAX_SCHOLARSHIP_LINKS_PER_PAGE = 40
 
-SCHOLARSHIP_PATH_PATTERN = re.compile(
+SCHOLARSHIP_URL_RE = re.compile(
     r"^/scholarship/[^/?#]+/?$",
     re.IGNORECASE,
 )
 
-LISTING_WORDS = (
-    "scholarship",
-    "scholarships",
-    "masters-scholarships",
-    "phd-scholarships",
-    "bachelors-scholarships",
-)
-
-FUNDING_KEYWORDS = (
-    "full funding",
-    "fully funded",
-    "partial funding",
-    "tuition fee",
-    "tuition fees",
-    "stipend",
-    "scholarship amount",
-    "funding type",
-    "financial support",
-    "award",
-    "grant",
-    "fellowship",
-)
-
 
 # ============================================================
-# BASIC TEXT HELPERS
+# GENERAL HELPERS
 # ============================================================
 
 def clean_text(value: str | None) -> str:
     if not value:
         return ""
-
-    value = re.sub(r"\s+", " ", value)
-    return value.strip()
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def normalize(value: str | None) -> str:
@@ -113,8 +86,8 @@ def normalize(value: str | None) -> str:
 
 
 def unique_list(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
+    seen = set()
+    result = []
 
     for value in values:
         value = clean_text(value)
@@ -131,14 +104,9 @@ def unique_list(values: list[str]) -> list[str]:
     return result
 
 
-def get_page_text(
-    context: BeautifulSoupCrawlingContext,
-) -> str:
-
+def page_text(context: BeautifulSoupCrawlingContext) -> str:
     soup = context.soup
 
-    # Work on a copy-like parsing context by removing
-    # non-readable elements.
     for tag in soup.find_all(
         ["script", "style", "noscript", "svg", "iframe"]
     ):
@@ -149,10 +117,7 @@ def get_page_text(
     )
 
 
-def get_multiline_text(
-    context: BeautifulSoupCrawlingContext,
-) -> str:
-
+def page_lines(context: BeautifulSoupCrawlingContext) -> list[str]:
     soup = context.soup
 
     for tag in soup.find_all(
@@ -160,28 +125,27 @@ def get_multiline_text(
     ):
         tag.decompose()
 
-    return soup.get_text("\n", strip=True)
+    return [
+        clean_text(x)
+        for x in soup.get_text("\n").splitlines()
+        if clean_text(x)
+    ]
 
 
-def get_title(
-    context: BeautifulSoupCrawlingContext,
-) -> str:
+def get_title(context: BeautifulSoupCrawlingContext) -> str:
+    tag = context.soup.find("title")
 
-    title_tag = context.soup.find("title")
-
-    if title_tag:
-        title = clean_text(title_tag.get_text())
-
-        if title:
-            return title
+    if tag:
+        value = clean_text(tag.get_text())
+        if value:
+            return value
 
     h1 = context.soup.find("h1")
 
     if h1:
-        title = clean_text(h1.get_text())
-
-        if title:
-            return title
+        value = clean_text(h1.get_text())
+        if value:
+            return value
 
     return "Unknown scholarship"
 
@@ -190,26 +154,20 @@ def get_headings(
     context: BeautifulSoupCrawlingContext,
 ) -> tuple[list[str], list[str], list[str]]:
 
-    h1s = unique_list(
-        [
-            clean_text(x.get_text())
-            for x in context.soup.find_all("h1")
-        ]
-    )
+    h1s = unique_list([
+        clean_text(x.get_text())
+        for x in context.soup.find_all("h1")
+    ])
 
-    h2s = unique_list(
-        [
-            clean_text(x.get_text())
-            for x in context.soup.find_all("h2")
-        ]
-    )
+    h2s = unique_list([
+        clean_text(x.get_text())
+        for x in context.soup.find_all("h2")
+    ])
 
-    h3s = unique_list(
-        [
-            clean_text(x.get_text())
-            for x in context.soup.find_all("h3")
-        ]
-    )
+    h3s = unique_list([
+        clean_text(x.get_text())
+        for x in context.soup.find_all("h3")
+    ])
 
     return h1s, h2s, h3s
 
@@ -218,8 +176,7 @@ def get_headings(
 # URL DETECTION
 # ============================================================
 
-def is_scholarship_detail_url(url: str) -> bool:
-
+def is_scholarship_url(url: str) -> bool:
     parsed = urlparse(url)
 
     if parsed.netloc.lower() not in {
@@ -228,340 +185,253 @@ def is_scholarship_detail_url(url: str) -> bool:
     }:
         return False
 
-    path = parsed.path.lower()
-
     return bool(
-        SCHOLARSHIP_PATH_PATTERN.fullmatch(path)
+        SCHOLARSHIP_URL_RE.fullmatch(
+            parsed.path.lower()
+        )
     )
 
 
-def is_listing_page(url: str) -> bool:
-
-    if is_scholarship_detail_url(url):
-        return False
-
-    parsed = urlparse(url)
-    path = parsed.path.lower()
-
-    return any(
-        word in path
-        for word in LISTING_WORDS
-    )
+def is_listing_url(url: str) -> bool:
+    return not is_scholarship_url(url)
 
 
 # ============================================================
-# SECTION EXTRACTION
+# FIELD EXTRACTION
 # ============================================================
 
-def extract_section(
-    text: str,
-    start_labels: list[str],
-    end_labels: list[str],
+FIELD_LABELS = [
+    "Eligible Degrees",
+    "Eligible Degree",
+    "Eligible Courses",
+    "Eligible Course",
+    "Eligible Nationalities",
+    "Eligible Nationality",
+    "Can Be Taken At",
+    "Study At",
+    "Funding Type",
+    "Deadline",
+    "Provider",
+    "Last Verified On",
+    "Overview",
+    "Scholarship Details",
+]
+
+
+def extract_labeled_section(
+    lines: list[str],
+    labels: list[str],
 ) -> str:
 
-    if not text:
-        return ""
+    normalized_lines = [
+        normalize(line)
+        for line in lines
+    ]
 
-    start_pattern = "|".join(
-        re.escape(label)
-        for label in start_labels
-    )
+    normalized_labels = [
+        normalize(label)
+        for label in labels
+    ]
 
-    end_pattern = "|".join(
-        re.escape(label)
-        for label in end_labels
-    )
+    for i, line in enumerate(normalized_lines):
 
-    pattern = re.compile(
-        rf"(?:{start_pattern})"
-        rf"\s*:?\s*(.*?)"
-        rf"(?=\s*(?:{end_pattern})"
-        rf"\s*:?\s*|$)",
-        re.IGNORECASE | re.DOTALL,
-    )
+        matched = None
 
-    match = pattern.search(text)
+        for label in normalized_labels:
 
-    if not match:
-        return ""
+            if line == label or line.startswith(label + ":"):
+                matched = label
+                break
 
-    return clean_text(match.group(1))
+        if matched is None:
+            continue
+
+        values = []
+
+        # Collect following lines until another known field label.
+        for next_line in lines[i + 1:i + 12]:
+
+            normalized_next = normalize(
+                next_line
+            )
+
+            if normalized_next in normalized_labels:
+                break
+
+            if any(
+                normalized_next.startswith(
+                    other + ":"
+                )
+                for other in normalized_labels
+            ):
+                break
+
+            values.append(next_line)
+
+        result = clean_text(
+            " ".join(values)
+        )
+
+        if result:
+            return result
+
+    return ""
 
 
-def extract_degree_requirements(
-    text: str,
+def extract_degree(
+    lines: list[str],
+    title: str,
+    headings: list[str],
 ) -> str:
 
-    return extract_section(
-        text,
+    result = extract_labeled_section(
+        lines,
         [
             "Eligible Degrees",
             "Eligible Degree",
         ],
-        [
-            "Funding Type",
-            "Eligible Courses",
-            "Deadline",
-            "Eligible Nationalities",
-            "Can Be Taken At",
-            "Provider",
-            "Overview",
-            "Scholarship Details",
-            "Last Verified On",
-        ],
     )
 
+    if result:
+        return result
 
-def extract_field_requirements(
-    text: str,
+    # Fallback to title/headings.
+    fallback = " ".join(
+        [title, *headings]
+    )
+
+    return clean_text(fallback)
+
+
+def extract_field(
+    lines: list[str],
+    title: str,
+    headings: list[str],
 ) -> str:
 
-    return extract_section(
-        text,
+    result = extract_labeled_section(
+        lines,
         [
             "Eligible Courses",
             "Eligible Course",
         ],
-        [
-            "Deadline",
-            "Eligible Nationalities",
-            "Can Be Taken At",
-            "Provider",
-            "Last Verified On",
-            "Overview",
-            "Scholarship Details",
-            "Eligible Degrees",
-            "Funding Type",
-        ],
+    )
+
+    if result:
+        return result
+
+    return clean_text(
+        " ".join(
+            [title, *headings]
+        )
     )
 
 
-def extract_nationality_requirements(
-    text: str,
+def extract_nationality(
+    lines: list[str],
 ) -> str:
 
-    return extract_section(
-        text,
+    return extract_labeled_section(
+        lines,
         [
             "Eligible Nationalities",
             "Eligible Nationality",
-        ],
-        [
-            "Can Be Taken At",
-            "Provider",
-            "Last Verified On",
-            "Overview",
-            "Scholarship Details",
-            "Eligible Degrees",
-            "Funding Type",
-            "Eligible Courses",
-            "Deadline",
         ],
     )
 
 
 def extract_destination(
-    text: str,
+    lines: list[str],
 ) -> str:
 
-    return extract_section(
-        text,
+    result = extract_labeled_section(
+        lines,
         [
             "Can Be Taken At",
             "Study At",
-            "Scholarship can be taken at",
-        ],
-        [
-            "Provider",
-            "Last Verified On",
-            "Overview",
-            "Scholarship Details",
-            "Eligible Degrees",
-            "Funding Type",
-            "Eligible Courses",
-            "Deadline",
-            "Eligible Nationalities",
         ],
     )
 
-
-# ============================================================
-# DEADLINE EXTRACTION
-# ============================================================
-
-MONTHS = (
-    "January|February|March|April|May|June|July|August|"
-    "September|October|November|December"
-)
-
-DEADLINE_PATTERN = re.compile(
-    rf"\b("
-    rf"(?:0?[1-9]|[12]\d|3[01])"
-    rf"(?:st|nd|rd|th)?"
-    rf"\s+(?:{MONTHS})\s+\d{{4}}"
-    rf"|"
-    rf"(?:{MONTHS})\s+"
-    rf"(?:0?[1-9]|[12]\d|3[01])"
-    rf"(?:st|nd|rd|th)?"
-    rf"[,]?\s+\d{{4}}"
-    rf"|"
-    rf"(?:0?[1-9]|[12]\d|3[01])"
-    rf"[-/]"
-    rf"(?:0?[1-9]|1[0-2])"
-    rf"[-/]"
-    rf"\d{{4}}"
-    rf")\b",
-    re.IGNORECASE,
-)
-
-
-def extract_deadlines(
-    text: str,
-) -> list[str]:
-
-    matches = DEADLINE_PATTERN.findall(text)
-
-    result: list[str] = []
-
-    for item in matches:
-
-        item = clean_text(item)
-
-        if item and item not in result:
-            result.append(item)
-
-    return result[:10]
-
-
-def deadline_is_expired(
-    deadlines: list[str],
-) -> bool:
-
-    if not deadlines:
-        return False
-
-    now = datetime.now()
-
-    formats = [
-        "%d %B %Y",
-        "%d %b %Y",
-        "%B %d %Y",
-        "%b %d %Y",
-        "%d-%m-%Y",
-        "%d/%m/%Y",
-    ]
-
-    parsed_dates = []
-
-    for raw_date in deadlines:
-
-        cleaned = re.sub(
-            r"(st|nd|rd|th)",
-            "",
-            raw_date,
-            flags=re.IGNORECASE,
-        )
-
-        for fmt in formats:
-
-            try:
-                parsed_dates.append(
-                    datetime.strptime(
-                        cleaned,
-                        fmt,
-                    )
-                )
-                break
-
-            except ValueError:
-                continue
-
-    if not parsed_dates:
-        return False
-
-    return all(
-        date.date() < now.date()
-        for date in parsed_dates
-    )
-
-
-# ============================================================
-# AGE
-# ============================================================
-
-def calculate_age(
-    date_of_birth: str,
-) -> int:
-
-    dob = datetime.strptime(
-        date_of_birth,
-        "%Y-%m-%d",
-    ).date()
-
-    today = datetime.now().date()
-
-    age = today.year - dob.year
-
-    if (today.month, today.day) < (
-        dob.month,
-        dob.day,
-    ):
-        age -= 1
-
-    return age
+    return result
 
 
 # ============================================================
 # DEGREE MATCHING
 # ============================================================
 
-def degree_matches_master(
+def has_master(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\bmaster(?:'s)?s?\b"
+            r"|\bmsc\b"
+            r"|\bm\.sc\b",
+            normalize(text),
+        )
+    )
+
+
+def has_phd(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\bph\.?d\b"
+            r"|\bdoctorate\b",
+            normalize(text),
+        )
+    )
+
+
+def has_bachelor(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\bbachelor(?:'s)?s?\b"
+            r"|\bbsc\b"
+            r"|\bb\.sc\b",
+            normalize(text),
+        )
+    )
+
+
+def degree_match(
     degree_text: str,
+    title: str,
 ) -> tuple[bool, bool]:
 
-    text = normalize(degree_text)
+    degree = normalize(degree_text)
+    title_normalized = normalize(title)
 
-    master_found = bool(
-        re.search(
-            r"\bmasters?\b"
-            r"|\bmaster'?s\b"
-            r"|\bmsc\b"
-            r"|\bm\.sc\b"
-            r"|\bma\b",
-            text,
-        )
-    )
+    # If title explicitly says PhD and not Master,
+    # don't call it a Master's match.
+    if has_phd(title_normalized) and not has_master(
+        title_normalized
+    ):
+        return False, True
 
-    conflicting_degree = bool(
-        re.search(
-            r"\bphd\b"
-            r"|\bph\.d\b"
-            r"|\bdoctorate\b"
-            r"|\bbachelors?\b"
-            r"|\bbachelor'?s\b"
-            r"|\bmbbs\b"
-            r"|\bmedicine\b",
-            text,
-        )
-    )
+    if has_bachelor(title_normalized) and not has_master(
+        title_normalized
+    ):
+        return False, True
 
-    return (
-        master_found,
-        conflicting_degree,
-    )
+    if has_master(degree):
+        return True, False
+
+    if has_master(title_normalized):
+        return True, False
+
+    if has_phd(degree) or has_bachelor(degree):
+        return False, True
+
+    return False, False
 
 
 # ============================================================
 # FIELD MATCHING
 # ============================================================
 
-def field_matches(
-    text: str,
-) -> tuple[bool, bool]:
+def field_match(text: str) -> tuple[bool, bool]:
 
-    text_normalized = normalize(text)
+    text = normalize(text)
 
-    strong_keywords = [
+    strong = [
         "computer science",
         "computer sciences",
         "information technology",
@@ -572,7 +442,7 @@ def field_matches(
         "computing",
     ]
 
-    related_keywords = [
+    related = [
         "data science",
         "artificial intelligence",
         "machine learning",
@@ -580,33 +450,24 @@ def field_matches(
         "cybersecurity",
         "data engineering",
         "software development",
-        "technology",
     ]
 
     strong_match = any(
-        keyword in text_normalized
-        for keyword in strong_keywords
+        keyword in text
+        for keyword in strong
     )
 
     related_match = any(
-        keyword in text_normalized
-        for keyword in related_keywords
+        keyword in text
+        for keyword in related
     )
 
     # IMPORTANT:
-    # Use a word boundary for IT.
-    # Otherwise "it" matches inside words such as
-    # "international".
-    if re.search(
-        r"\bit\b",
-        text_normalized,
-    ):
+    # IT must be a complete word.
+    if re.search(r"\bit\b", text):
         strong_match = True
 
-    return (
-        strong_match,
-        related_match,
-    )
+    return strong_match, related_match
 
 
 # ============================================================
@@ -614,189 +475,106 @@ def field_matches(
 # ============================================================
 
 def nationality_match(
-    nationality_text: str,
-) -> tuple[str, bool, bool]:
+    text: str,
+) -> tuple[str, bool]:
 
-    text = normalize(
-        nationality_text
-    )
+    text = normalize(text)
 
     if not text:
-        return (
-            "unknown",
-            False,
-            True,
-        )
+        return "unknown", False
 
     open_patterns = [
         "open to all nationals",
         "all nationals",
+        "all nationalities",
         "open to international students",
         "international students",
-        "all nationalities",
         "any nationality",
         "open to everyone",
     ]
 
     if any(
-        pattern in text
-        for pattern in open_patterns
+        x in text
+        for x in open_patterns
     ):
-        return (
-            "open",
-            False,
-            False,
-        )
+        return "eligible", False
 
-    benin_patterns = [
-        "benin",
-        "beninese",
-        "african nationals",
-        "african students",
-        "students from africa",
-        "sub-saharan africa",
-    ]
-
-    if any(
-        pattern in text
-        for pattern in benin_patterns
+    if (
+        "benin" in text
+        or "beninese" in text
+        or "african nationals" in text
+        or "african students" in text
+        or "students from africa" in text
     ):
-        return (
-            "eligible",
-            False,
-            False,
-        )
+        return "eligible", False
 
-    india_only_patterns = [
+    india_only = [
         "indian nationals only",
         "indian citizens only",
         "only indian nationals",
         "only indian citizens",
-        "open to indian nationals only",
-        "open to indian citizens only",
         "for indian nationals only",
         "for indian citizens only",
     ]
 
     if any(
-        pattern in text
-        for pattern in india_only_patterns
+        x in text
+        for x in india_only
     ):
-        return (
-            "excluded",
-            True,
-            False,
-        )
+        return "excluded", True
 
-    restrictive_patterns = [
-        "only citizens of",
-        "citizens only",
-        "nationals only",
-        "residents only",
-        "residents of",
-        "citizens of",
-    ]
-
-    if any(
-        pattern in text
-        for pattern in restrictive_patterns
-    ):
-
-        if (
-            "india" in text
-            or "indian" in text
-        ):
-            return (
-                "excluded",
-                True,
-                False,
-            )
-
-        return (
-            "unknown",
-            False,
-            True,
-        )
-
-    # Merely mentioning Indian students is NOT enough
-    # to declare the scholarship ineligible.
     if (
-        "indian" in text
-        or "india" in text
+        "citizens only" in text
+        or "nationals only" in text
+        or "only citizens of" in text
     ):
-        return (
-            "unknown",
-            False,
-            True,
-        )
+        return "unknown", True
 
-    return (
-        "unknown",
-        False,
-        True,
-    )
+    return "unknown", False
 
 
 # ============================================================
 # CGPA
 # ============================================================
 
-def extract_cgpa_requirements(
+def extract_cgpa(
     text: str,
 ) -> list[str]:
 
     patterns = [
-
-        r"\b(?:minimum|min|required|at least)"
+        r"(?:minimum|min|required|at least)"
         r"\s*(?:cgpa|gpa)"
         r"\s*(?:of|:)?\s*"
         r"\d+(?:\.\d+)?"
-        r"(?:\s*(?:/|out of)\s*"
-        r"\d+(?:\.\d+)?)?",
+        r"(?:\s*(?:/|out of)\s*\d+(?:\.\d+)?)?",
 
-        r"\bcgpa"
+        r"\b(?:cgpa|gpa)"
         r"\s*(?:of|:)?\s*"
         r"\d+(?:\.\d+)?"
-        r"(?:\s*(?:/|out of)\s*"
-        r"\d+(?:\.\d+)?)?",
+        r"(?:\s*(?:/|out of)\s*\d+(?:\.\d+)?)?",
 
-        r"\bgpa"
-        r"\s*(?:of|:)?\s*"
-        r"\d+(?:\.\d+)?"
-        r"(?:\s*(?:/|out of)\s*"
-        r"\d+(?:\.\d+)?)?",
-
-        r"\bminimum\s+"
-        r"\d+(?:\.\d+)?\s*%",
-
-        r"\b\d+(?:\.\d+)?\s*%"
-        r"\s*(?:or above|minimum|required)",
+        r"\bminimum\s+\d+(?:\.\d+)?\s*%",
     ]
 
-    results: list[str] = []
+    results = []
 
     for pattern in patterns:
 
-        matches = re.findall(
+        for match in re.findall(
             pattern,
             text,
-            flags=re.IGNORECASE,
-        )
-
-        for match in matches:
+            re.IGNORECASE,
+        ):
 
             match = clean_text(match)
 
-            if (
-                match
-                and match not in results
-            ):
+            if match and match not in results:
                 results.append(match)
 
     return results[:10]
 
 
-def parse_cgpa_requirement(
+def parse_cgpa(
     requirement: str,
 ) -> tuple[float | None, float | None]:
 
@@ -806,13 +584,12 @@ def parse_cgpa_requirement(
 
     match = re.search(
         r"(\d+(?:\.\d+)?)"
-        r"\s*(?:/|out of)"
-        r"\s*(\d+(?:\.\d+)?)",
+        r"\s*(?:/|out of)\s*"
+        r"(\d+(?:\.\d+)?)",
         text,
     )
 
     if match:
-
         return (
             float(match.group(1)),
             float(match.group(2)),
@@ -824,7 +601,6 @@ def parse_cgpa_requirement(
     )
 
     if match:
-
         return (
             float(match.group(1)),
             100.0,
@@ -844,128 +620,226 @@ def parse_cgpa_requirement(
         )
 
         if value <= 4:
-            return (
-                value,
-                4.0,
-            )
+            return value, 4.0
 
         if value <= 10:
-            return (
-                value,
-                10.0,
-            )
+            return value, 10.0
 
-    return (
-        None,
-        None,
-    )
+    return None, None
 
 
-def cgpa_eligibility(
+def check_cgpa(
     requirements: list[str],
 ) -> tuple[str, bool, list[str]]:
 
     if not requirements:
-
         return (
             "unknown",
             False,
-            [
-                "No clear CGPA/GPA requirement was found."
-            ],
+            ["No clear CGPA requirement detected."],
         )
 
-    applicant_cgpa = STUDENT_PROFILE["cgpa"]
-    applicant_scale = STUDENT_PROFILE[
-        "cgpa_scale"
-    ]
-
-    reasons: list[str] = []
+    applicant = (
+        STUDENT_PROFILE["cgpa"]
+        / STUDENT_PROFILE["cgpa_scale"]
+    )
 
     for requirement in requirements:
 
-        required, scale = (
-            parse_cgpa_requirement(
-                requirement
-            )
+        required, scale = parse_cgpa(
+            requirement
         )
 
-        if (
-            required is None
-            or scale is None
-        ):
+        if required is None:
             continue
 
-        applicant_normalized = (
-            applicant_cgpa
-            / applicant_scale
-        )
-
         required_normalized = (
-            required
-            / scale
+            required / scale
         )
 
-        if (
-            applicant_normalized
-            >= required_normalized
-        ):
-
-            reasons.append(
-                f"Your CGPA "
-                f"{applicant_cgpa}/"
-                f"{applicant_scale} "
-                f"meets the detected "
-                f"requirement "
-                f"{requirement}."
-            )
+        if applicant >= required_normalized:
 
             return (
                 "eligible",
                 False,
-                reasons,
+                [
+                    f"Your CGPA "
+                    f"{STUDENT_PROFILE['cgpa']}/"
+                    f"{STUDENT_PROFILE['cgpa_scale']} "
+                    f"meets {requirement}."
+                ],
             )
-
-        reasons.append(
-            f"Your CGPA "
-            f"{applicant_cgpa}/"
-            f"{applicant_scale} "
-            f"is below the detected "
-            f"requirement "
-            f"{requirement}."
-        )
 
         return (
             "excluded",
             True,
-            reasons,
+            [
+                f"Your CGPA "
+                f"{STUDENT_PROFILE['cgpa']}/"
+                f"{STUDENT_PROFILE['cgpa_scale']} "
+                f"is below {requirement}."
+            ],
         )
 
     return (
         "unknown",
         False,
-        [
-            "A CGPA requirement was found "
-            "but could not be reliably interpreted."
-        ],
+        ["CGPA requirement could not be interpreted."],
     )
 
 
 # ============================================================
-# AGE LIMIT
+# DESTINATION
 # ============================================================
 
-def extract_age_limit(
+def find_destination(
+    destination: str,
+    full_text: str,
+) -> str:
+
+    text = normalize(
+        destination or full_text
+    )
+
+    found = []
+
+    for country in STUDENT_PROFILE[
+        "preferred_destinations"
+    ]:
+
+        if normalize(country) in text:
+            found.append(country)
+
+    if found:
+        return ", ".join(
+            unique_list(found)
+        )
+
+    return clean_text(
+        destination
+    ) or "Unknown"
+
+
+# ============================================================
+# DEADLINES
+# ============================================================
+
+MONTHS = (
+    "January|February|March|April|May|June|July|August|"
+    "September|October|November|December"
+)
+
+DATE_RE = re.compile(
+    rf"(?:"
+    rf"(?:0?[1-9]|[12]\d|3[01])"
+    rf"(?:st|nd|rd|th)?\s+(?:{MONTHS})\s+\d{{4}}"
+    rf"|"
+    rf"(?:{MONTHS})\s+(?:0?[1-9]|[12]\d|3[01])"
+    rf"(?:st|nd|rd|th)?[,]?\s+\d{{4}}"
+    rf"|"
+    rf"\d{{1,2}}[-/]\d{{1,2}}[-/]\d{{4}}"
+    rf")",
+    re.IGNORECASE,
+)
+
+
+def extract_deadlines(
+    text: str,
+) -> list[str]:
+
+    return unique_list(
+        [
+            clean_text(x)
+            for x in DATE_RE.findall(text)
+        ]
+    )[:10]
+
+
+def expired_deadline(
+    deadlines: list[str],
+) -> bool:
+
+    formats = [
+        "%d %B %Y",
+        "%B %d %Y",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+    ]
+
+    parsed = []
+
+    for raw in deadlines:
+
+        cleaned = re.sub(
+            r"(st|nd|rd|th)",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        )
+
+        for fmt in formats:
+
+            try:
+                parsed.append(
+                    datetime.strptime(
+                        cleaned,
+                        fmt,
+                    )
+                )
+                break
+            except ValueError:
+                pass
+
+    if not parsed:
+        return False
+
+    today = datetime.now().date()
+
+    return all(
+        x.date() < today
+        for x in parsed
+    )
+
+
+# ============================================================
+# AGE
+# ============================================================
+
+def get_age() -> int:
+
+    dob = datetime.strptime(
+        STUDENT_PROFILE["date_of_birth"],
+        "%Y-%m-%d",
+    ).date()
+
+    today = datetime.now().date()
+
+    age = (
+        today.year
+        - dob.year
+    )
+
+    if (
+        today.month,
+        today.day
+    ) < (
+        dob.month,
+        dob.day
+    ):
+        age -= 1
+
+    return age
+
+
+def get_age_limit(
     text: str,
 ) -> int | None:
 
     patterns = [
-        r"under\s+(\d{2})\s+years?",
-        r"below\s+(\d{2})\s+years?",
-        r"less\s+than\s+(\d{2})\s+years?",
-        r"maximum\s+age\s*(?:of|:)?\s*(\d{2})",
-        r"age\s*(?:limit|maximum)"
-        r"\s*(?:of|:)?\s*(\d{2})",
+        r"under\s+(\d{2})\s+years",
+        r"below\s+(\d{2})\s+years",
+        r"maximum age.*?(\d{2})",
+        r"age limit.*?(\d{2})",
     ]
 
     for pattern in patterns:
@@ -973,7 +847,7 @@ def extract_age_limit(
         match = re.search(
             pattern,
             text,
-            flags=re.IGNORECASE,
+            re.IGNORECASE,
         )
 
         if match:
@@ -985,136 +859,63 @@ def extract_age_limit(
 
 
 # ============================================================
-# DESTINATION
+# MATCHING
 # ============================================================
 
-def detect_destination(
-    destination_text: str,
-    full_text: str,
-) -> str:
-
-    text = clean_text(
-        destination_text
-    )
-
-    if not text:
-        text = clean_text(
-            full_text
-        )
-
-    countries = STUDENT_PROFILE[
-        "preferred_destinations"
-    ]
-
-    found: list[str] = []
-
-    normalized_text = normalize(
-        text
-    )
-
-    for country in countries:
-
-        if normalize(country) in normalized_text:
-            found.append(country)
-
-    if found:
-        return ", ".join(
-            unique_list(found)
-        )
-
-    location_patterns = [
-        "worldwide",
-        "any country",
-        "all countries",
-        "international",
-        "universities across the world",
-    ]
-
-    for pattern in location_patterns:
-
-        if pattern in normalized_text:
-            return text[:500]
-
-    return (
-        text[:500]
-        if text
-        else "Unknown"
-    )
-
-
-# ============================================================
-# MATCHING ENGINE
-# ============================================================
-
-def build_match(
+def calculate_match(
     title: str,
-    degree_text: str,
-    field_text: str,
-    nationality_text: str,
-    destination_text: str,
+    degree: str,
+    field: str,
+    nationality: str,
+    destination: str,
     full_text: str,
     deadlines: list[str],
     cgpa_requirements: list[str],
 ) -> dict[str, Any]:
 
     score = 0
-
-    reasons: list[str] = []
-    warnings: list[str] = []
+    reasons = []
+    warnings = []
 
     # --------------------------------------------------------
     # DEGREE
     # --------------------------------------------------------
 
-    (
-        master_found,
-        conflicting_degree,
-    ) = degree_matches_master(
-        degree_text
+    master, conflicting = degree_match(
+        degree,
+        title,
     )
 
-    if master_found:
+    if master:
 
         score += 30
 
         reasons.append(
-            "The scholarship explicitly "
-            "accepts Master's-level study."
+            "Master's-level study detected."
         )
 
-    elif conflicting_degree:
+    elif conflicting:
 
-        score -= 40
+        score -= 45
 
         warnings.append(
-            "The detected degree level "
-            "appears to conflict with "
-            "your Master's target."
+            "The scholarship appears to target "
+            "a different degree level."
         )
 
     else:
 
         warnings.append(
-            "The scholarship's degree level "
-            "could not be clearly confirmed."
+            "Master's eligibility could not "
+            "be confirmed."
         )
 
     # --------------------------------------------------------
     # FIELD
     # --------------------------------------------------------
 
-    field_search_text = " ".join(
-        [
-            title,
-            field_text,
-        ]
-    )
-
-    (
-        strong_field,
-        related_field,
-    ) = field_matches(
-        field_search_text
+    strong_field, related_field = field_match(
+        f"{title} {field}"
     )
 
     if strong_field:
@@ -1122,8 +923,7 @@ def build_match(
         score += 30
 
         reasons.append(
-            "The scholarship is directly "
-            "related to Computer Science / IT."
+            "Computer Science / IT relevance detected."
         )
 
     elif related_field:
@@ -1131,9 +931,7 @@ def build_match(
         score += 18
 
         reasons.append(
-            "The scholarship is related "
-            "to a technical field relevant "
-            "to Computer Science / IT."
+            "Related technical field detected."
         )
 
     else:
@@ -1141,56 +939,41 @@ def build_match(
         score -= 25
 
         warnings.append(
-            "No clear Computer Science / "
-            "IT field match was detected."
+            "Computer Science / IT relevance "
+            "could not be confirmed."
         )
 
     # --------------------------------------------------------
     # NATIONALITY
     # --------------------------------------------------------
 
-    (
-        nationality_status,
-        nationality_excluded,
-        nationality_manual,
-    ) = nationality_match(
-        nationality_text
+    nationality_status, nationality_restricted = (
+        nationality_match(
+            nationality
+        )
     )
 
-    if nationality_status == "open":
+    if nationality_status == "eligible":
 
         score += 20
 
         reasons.append(
-            "The scholarship is open to "
-            "all nationals/international students."
+            "Nationality appears eligible."
         )
 
-    elif nationality_status == "eligible":
+    elif nationality_restricted:
 
-        score += 20
-
-        reasons.append(
-            "The nationality information "
-            "explicitly includes your "
-            "eligibility group."
-        )
-
-    elif nationality_excluded:
-
-        score -= 60
+        score -= 50
 
         warnings.append(
-            "The detected nationality "
-            "restriction appears to exclude "
-            "a Benin applicant."
+            "Nationality eligibility needs "
+            "careful manual confirmation."
         )
 
-    elif nationality_manual:
+    else:
 
         warnings.append(
-            "Nationality eligibility "
-            "needs manual confirmation."
+            "Nationality eligibility is unclear."
         )
 
     # --------------------------------------------------------
@@ -1198,47 +981,33 @@ def build_match(
     # --------------------------------------------------------
 
     destination_normalized = normalize(
-        destination_text
+        destination
     )
 
-    preferred_match = False
+    preferred = any(
+        normalize(country)
+        in destination_normalized
+        for country in STUDENT_PROFILE[
+            "preferred_destinations"
+        ]
+    )
 
-    for country in STUDENT_PROFILE[
-        "preferred_destinations"
-    ]:
-
-        if normalize(country) in (
-            destination_normalized
-        ):
-            preferred_match = True
-            break
-
-    if preferred_match:
+    if preferred:
 
         score += 10
 
         reasons.append(
-            "The study destination matches "
-            "one of your preferred countries."
-        )
-
-    elif destination_text:
-
-        warnings.append(
-            "Study destination detected as: "
-            f"{destination_text[:300]}"
+            "Preferred destination detected."
         )
 
     # --------------------------------------------------------
     # CGPA
     # --------------------------------------------------------
 
-    (
-        cgpa_status,
-        cgpa_excluded,
-        cgpa_reasons,
-    ) = cgpa_eligibility(
-        cgpa_requirements
+    cgpa_status, cgpa_bad, cgpa_reasons = (
+        check_cgpa(
+            cgpa_requirements
+        )
     )
 
     if cgpa_status == "eligible":
@@ -1249,7 +1018,7 @@ def build_match(
             cgpa_reasons
         )
 
-    elif cgpa_excluded:
+    elif cgpa_bad:
 
         score -= 35
 
@@ -1267,28 +1036,21 @@ def build_match(
     # AGE
     # --------------------------------------------------------
 
-    age_limit = extract_age_limit(
+    age_limit = get_age_limit(
         full_text
     )
 
-    if age_limit is not None:
+    if age_limit:
 
-        applicant_age = calculate_age(
-            STUDENT_PROFILE[
-                "date_of_birth"
-            ]
-        )
+        age = get_age()
 
-        if applicant_age <= age_limit:
+        if age <= age_limit:
 
             score += 5
 
             reasons.append(
-                f"Your age "
-                f"({applicant_age}) is "
-                f"within the detected "
-                f"age limit of "
-                f"{age_limit}."
+                f"Age {age} is within "
+                f"the detected limit."
             )
 
         else:
@@ -1296,31 +1058,36 @@ def build_match(
             score -= 30
 
             warnings.append(
-                f"Your age "
-                f"({applicant_age}) appears "
-                f"to exceed the detected "
-                f"age limit of "
-                f"{age_limit}."
+                f"Age {age} may exceed "
+                f"the detected limit."
             )
 
     # --------------------------------------------------------
     # FUNDING
     # --------------------------------------------------------
 
-    normalized_full_text = normalize(
-        full_text
-    )
+    funding_words = [
+        "fully funded",
+        "full funding",
+        "partial funding",
+        "tuition fee",
+        "tuition fees",
+        "stipend",
+        "scholarship amount",
+        "financial support",
+        "grant",
+        "fellowship",
+    ]
 
     if any(
-        keyword in normalized_full_text
-        for keyword in FUNDING_KEYWORDS
+        word in normalize(full_text)
+        for word in funding_words
     ):
 
         score += 5
 
         reasons.append(
-            "The page contains a "
-            "scholarship/funding signal."
+            "Funding information detected."
         )
 
     # --------------------------------------------------------
@@ -1329,32 +1096,30 @@ def build_match(
 
     if deadlines:
 
-        if deadline_is_expired(
+        if expired_deadline(
             deadlines
         ):
 
             score -= 20
 
             warnings.append(
-                "The detected deadline "
-                "appears to have expired."
+                "Detected deadline may have expired."
             )
 
         else:
 
             reasons.append(
-                "Detected deadline: "
-                f"{deadlines[0]}"
+                f"Deadline detected: {deadlines[0]}"
             )
 
     else:
 
         warnings.append(
-            "No clear deadline was detected."
+            "No clear deadline detected."
         )
 
     # --------------------------------------------------------
-    # NORMALIZE
+    # FINAL SCORE
     # --------------------------------------------------------
 
     score = max(
@@ -1369,50 +1134,35 @@ def build_match(
     # STATUS
     # --------------------------------------------------------
 
-    if nationality_excluded:
-
+    if conflicting and not master:
         status = "likely_not_eligible"
 
-    elif cgpa_excluded:
-
+    elif nationality_status == "excluded":
         status = "likely_not_eligible"
 
-    elif (
-        conflicting_degree
-        and not master_found
-    ):
-
+    elif cgpa_bad:
         status = "likely_not_eligible"
 
     elif score >= 75:
-
         status = "strong_match"
 
     elif score >= 55:
-
         status = "good_match"
 
     elif score >= 35:
-
         status = "possible_match"
 
-    elif score >= 25:
-
+    elif score >= 20:
         status = "needs_manual_check"
 
     else:
-
         status = "likely_not_eligible"
 
     return {
         "match_score": score,
         "match_status": status,
-        "reasons": unique_list(
-            reasons
-        ),
-        "warnings": unique_list(
-            warnings
-        ),
+        "reasons": unique_list(reasons),
+        "warnings": unique_list(warnings),
     }
 
 
@@ -1427,14 +1177,10 @@ async def process_listing_page(
     url = context.request.url
 
     Actor.log.info(
-        f"Scanning scholarship listing page: {url}"
+        f"Scanning listing page: {url}"
     )
 
-    found_urls: list[str] = []
-
-    # --------------------------------------------------------
-    # FIND INDIVIDUAL SCHOLARSHIP LINKS
-    # --------------------------------------------------------
+    scholarship_urls = []
 
     for link in context.soup.find_all(
         "a",
@@ -1449,13 +1195,13 @@ async def process_listing_page(
         ):
             continue
 
-        absolute_url = urljoin(
+        absolute = urljoin(
             url,
             href,
         )
 
         parsed = urlparse(
-            absolute_url
+            absolute
         )
 
         if parsed.netloc.lower() not in {
@@ -1470,51 +1216,38 @@ async def process_listing_page(
             f"{parsed.path}"
         )
 
-        if not is_scholarship_detail_url(
+        if not is_scholarship_url(
             clean_url
         ):
             continue
 
-        if clean_url not in found_urls:
+        if clean_url not in scholarship_urls:
 
-            found_urls.append(
+            scholarship_urls.append(
                 clean_url
             )
 
-        if (
-            len(found_urls)
-            >= MAX_SCHOLARSHIP_LINKS_PER_PAGE
-        ):
+        if len(
+            scholarship_urls
+        ) >= MAX_SCHOLARSHIP_LINKS_PER_PAGE:
             break
 
     Actor.log.info(
-        f"Found {len(found_urls)} "
+        f"Found {len(scholarship_urls)} "
         "individual scholarship links."
     )
 
-    # --------------------------------------------------------
-    # IMPORTANT FIX
-    #
-    # Crawlee 1.10.3 in your Actor expects
-    # URL strings here, not dictionaries.
-    # --------------------------------------------------------
-
-    if found_urls:
+    # IMPORTANT:
+    # Crawlee 1.10.3 expects strings here.
+    if scholarship_urls:
 
         await context.add_requests(
-            found_urls
+            scholarship_urls
         )
 
         Actor.log.info(
-            f"Queued {len(found_urls)} "
+            f"Queued {len(scholarship_urls)} "
             "individual scholarship pages."
-        )
-
-    else:
-
-        Actor.log.warning(
-            "No individual scholarship "
-            "links were found."
         )
 
 
@@ -1529,12 +1262,8 @@ async def process_scholarship_page(
     url = context.request.url
 
     Actor.log.info(
-        f"Analyzing individual scholarship: {url}"
+        f"Analyzing scholarship: {url}"
     )
-
-    # --------------------------------------------------------
-    # BASIC PAGE INFORMATION
-    # --------------------------------------------------------
 
     title = get_title(
         context
@@ -1544,67 +1273,69 @@ async def process_scholarship_page(
         context
     )
 
-    multiline_text = get_multiline_text(
+    lines = page_lines(
         context
     )
 
-    full_text = get_page_text(
+    full_text = page_text(
         context
     )
 
+    all_headings = [
+        *h1s,
+        *h2s,
+        *h3s,
+    ]
+
     # --------------------------------------------------------
-    # ACTUAL SCHOLARSHIP FIELDS
+    # EXTRACT
     # --------------------------------------------------------
 
-    degree_requirements = (
-        extract_degree_requirements(
-            multiline_text
-        )
+    degree_requirements = extract_degree(
+        lines,
+        title,
+        all_headings,
     )
 
-    field_requirements = (
-        extract_field_requirements(
-            multiline_text
-        )
+    field_requirements = extract_field(
+        lines,
+        title,
+        all_headings,
     )
 
-    nationality_requirements = (
-        extract_nationality_requirements(
-            multiline_text
-        )
+    nationality_requirements = extract_nationality(
+        lines
     )
 
-    destination_text = extract_destination(
-        multiline_text
+    destination = extract_destination(
+        lines
     )
 
     deadlines = extract_deadlines(
-        multiline_text
+        full_text
     )
 
-    cgpa_requirements = (
-        extract_cgpa_requirements(
-            full_text
-        )
+    cgpa_requirements = extract_cgpa(
+        full_text
     )
 
     # --------------------------------------------------------
     # MATCH
     # --------------------------------------------------------
 
-    match = build_match(
+    match = calculate_match(
         title=title,
-        degree_text=degree_requirements,
-        field_text=field_requirements,
-        nationality_text=nationality_requirements,
-        destination_text=destination_text,
+        degree=degree_requirements,
+        field=field_requirements,
+        nationality=nationality_requirements,
+        destination=destination,
         full_text=full_text,
         deadlines=deadlines,
         cgpa_requirements=cgpa_requirements,
     )
 
     # --------------------------------------------------------
-    # SAVE RESULT
+    # SAVE
     # --------------------------------------------------------
 
     record = {
@@ -1638,40 +1369,30 @@ async def process_scholarship_page(
 
         "degree_requirements": {
             "raw": degree_requirements,
-            "target": STUDENT_PROFILE[
-                "degree"
-            ],
+            "target": "Master",
         },
 
         "field_requirements": {
             "raw": field_requirements,
-            "target": STUDENT_PROFILE[
-                "field"
-            ],
+            "target": "Computer Science",
         },
 
         "nationality_requirements": {
             "raw": nationality_requirements,
-            "student_nationality": (
-                STUDENT_PROFILE[
-                    "nationality"
-                ]
-            ),
+            "student_nationality": "Benin",
         },
 
         "cgpa_requirements": (
             cgpa_requirements
         ),
 
-        "destination": (
-            destination_text
-        ),
+        "destination": destination,
 
         "deadlines": deadlines,
 
         "deadline_status": (
             "expired"
-            if deadline_is_expired(
+            if expired_deadline(
                 deadlines
             )
             else "active_or_unknown"
@@ -1689,14 +1410,15 @@ async def process_scholarship_page(
     )
 
     Actor.log.info(
-        f"RESULT: {title} | "
+        f"RESULT | "
+        f"{title} | "
         f"score={match['match_score']} | "
-        f"status={match['match_status']}"
+        f"{match['match_status']}"
     )
 
 
 # ============================================================
-# MAIN ROUTER
+# ROUTER
 # ============================================================
 
 @router.default_handler
@@ -1706,8 +1428,7 @@ async def default_handler(
 
     url = context.request.url
 
-    # Individual scholarship page
-    if is_scholarship_detail_url(
+    if is_scholarship_url(
         url
     ):
 
@@ -1717,18 +1438,6 @@ async def default_handler(
 
         return
 
-    # Category/listing page
-    if is_listing_page(
-        url
-    ):
-
-        await process_listing_page(
-            context
-        )
-
-        return
-
-    # Anything else
-    Actor.log.info(
-        f"Skipping non-scholarship page: {url}"
+    await process_listing_page(
+        context
     )
