@@ -1,10 +1,4 @@
-"""Module defines the main entry point for the Apify Actor.
-
-Feel free to modify this file to suit your specific needs.
-
-To build Apify Actors, utilize the Apify SDK toolkit, read more at the official documentation:
-https://docs.apify.com/sdk/python
-"""
+"""Main entry point for the Master Scholarship Hunter."""
 
 from __future__ import annotations
 
@@ -16,50 +10,86 @@ from crawlee.crawlers import BeautifulSoupCrawler
 from .routes import router
 
 
-async def main() -> None:
-    """Define a main entry point for the Apify Actor.
+DEFAULT_START_URL = (
+    "https://www.wemakescholars.com/"
+    "Masters-scholarships-in-computer-sciences-and-information-technology-to-study-abroad"
+)
 
-    This coroutine is executed using `asyncio.run()`, so it must remain an asynchronous function for proper execution.
-    Asynchronous execution is required for communication with Apify platform, and it also enhances performance in
-    the field of web scraping significantly.
-    """
-    # Enter the context of the Actor.
+
+async def main() -> None:
+    """Run the scholarship crawler."""
+
     async with Actor:
-        # Handle graceful abort - Actor is being stopped by user or platform
+
+        # ----------------------------------------------------
+        # Graceful shutdown
+        # ----------------------------------------------------
+
         async def on_aborting() -> None:
-            # Persist any state, do any cleanup you need, and terminate the Actor using
-            # `await Actor.exit()` explicitly as soon as possible. This will help ensure that
-            # the Actor is doing best effort to honor any potential limits on costs of a
-            # single run set by the user.
-            # Wait 1 second to allow Crawlee/SDK state persistence operations to complete
-            # This is a temporary workaround until SDK implements proper state persistence in the aborting event
             await asyncio.sleep(1)
             await Actor.exit()
 
         Actor.on(Event.ABORTING, on_aborting)
 
-        # Retrieve the Actor input, and use default values if not provided.
-        actor_input = await Actor.get_input() or {}
-        start_urls = [
-            url.get('url')
-            for url in actor_input.get(
-                'start_urls',
-                [{'url': 'https://apify.com'}],
-            )
-        ]
+        # ----------------------------------------------------
+        # Read input
+        # ----------------------------------------------------
 
-        # Exit if no start URLs are provided.
+        actor_input = await Actor.get_input() or {}
+
+        raw_start_urls = actor_input.get(
+            "start_urls",
+            [{"url": DEFAULT_START_URL}],
+        )
+
+        start_urls = []
+
+        for item in raw_start_urls:
+            if isinstance(item, str):
+                start_urls.append(item)
+
+            elif isinstance(item, dict):
+                url = item.get("url")
+
+                if url:
+                    start_urls.append(url)
+
+        # Remove duplicates.
+        start_urls = list(dict.fromkeys(start_urls))
+
         if not start_urls:
-            Actor.log.info('No start URLs specified in Actor input, exiting...')
+            Actor.log.error(
+                "No start URLs supplied. Exiting."
+            )
             await Actor.exit()
 
-        # Create a crawler.
+        Actor.log.info(
+            f"Starting scholarship hunt with {len(start_urls)} start URL(s)."
+        )
+
+        # ----------------------------------------------------
+        # Crawler
+        # ----------------------------------------------------
+
         crawler = BeautifulSoupCrawler(
-            # Limit the crawl to max requests. Remove or increase it for crawling all links.
-            max_requests_per_crawl=10,
-            # Set the request handler to the request router defined in routes.py.
+
+            # Increase this when you're happy with the results.
+            # Start with 50 to keep costs/testing under control.
+            max_requests_per_crawl=50,
+
             request_handler=router,
         )
 
-        # Run the crawler with the starting requests.
+        # ----------------------------------------------------
+        # Run
+        # ----------------------------------------------------
+
         await crawler.run(start_urls)
+
+        Actor.log.info(
+            "Scholarship hunt completed successfully."
+        )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
