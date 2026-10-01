@@ -1,0 +1,1 @@
+# master-scholarship-hunter
