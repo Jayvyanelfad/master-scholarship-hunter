@@ -63,6 +63,22 @@ async def main() -> None:
 
         await crawler.run(start_urls)
 
+        # Read the scholarships produced by this Actor run.
+        dataset = await Actor.open_dataset()
+        dataset_data = await dataset.get_data()
+        scholarship_items = list(dataset_data.items)
+
+        Actor.log.info(
+            f"Collected {len(scholarship_items)} scholarship records."
+        )
+
+        # Send the daily email digest.
+        from .emailer import send_scholarship_email
+
+        await send_scholarship_email(scholarship_items)
+
+        Actor.log.info("Scholarship email sent successfully.")
+
         Actor.log.info("Master Scholarship Hunter finished successfully.")
 
 
