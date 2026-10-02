@@ -1,16 +1,13 @@
-"""Email scholarship results through Resend."""
+"""Send scholarship results through Gmail SMTP."""
 
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
+import smtplib
+import ssl
+from email.message import EmailMessage
 from html import escape
 from typing import Any
-
-
-RESEND_API_URL = "https://api.resend.com/emails"
 
 
 def _get_required_env(name: str) -> str:
@@ -32,12 +29,6 @@ def _score(item: dict[str, Any]) -> float:
 
 
 def _is_relevant(item: dict[str, Any]) -> bool:
-    """
-    Only email scholarships that have a meaningful match.
-
-    Good matches are always included.
-    Needs-manual-check is included when the score is at least 30.
-    """
     status = _status(item)
     score = _score(item)
 
@@ -72,12 +63,14 @@ def _scholarship_card(item: dict[str, Any]) -> str:
     score = _score(item)
     status = escape(_clean(item.get("match_status")))
 
-    link = (
-        f'<a href="{escape(url)}" '
-        f'style="font-size:16px;font-weight:700;">{title}</a>'
-        if url
-        else f"<strong>{title}</strong>"
-    )
+    if url:
+        link = (
+            f'<a href="{escape(url)}" '
+            f'style="font-size:16px;font-weight:700;">'
+            f"{title}</a>"
+        )
+    else:
+        link = f"<strong>{title}</strong>"
 
     return f"""
     <div style="
@@ -122,9 +115,14 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
         return """
         <html>
         <body style="font-family:Arial,sans-serif;background:#f6f7f9;padding:24px;">
-            <div style="max-width:760px;margin:auto;background:white;padding:24px;
-                        border-radius:12px;">
-                <h1>Master Scholarship Hunter</h1>
+            <div style="
+                max-width:760px;
+                margin:auto;
+                background:white;
+                padding:24px;
+                border-radius:12px;
+            ">
+                <h1>🎓 Master Scholarship Hunter</h1>
                 <p>No scholarships met the current matching threshold today.</p>
                 <p>
                     The Actor completed successfully and checked the available
@@ -135,7 +133,10 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
         </html>
         """
 
-    cards = "\n".join(_scholarship_card(item) for item in relevant)
+    cards = "\n".join(
+        _scholarship_card(item)
+        for item in relevant
+    )
 
     return f"""
     <html>
@@ -164,10 +165,15 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
 
             {cards}
 
-            <hr style="border:none;border-top:1px solid #ddd;margin:24px 0;">
+            <hr style="
+                border:none;
+                border-top:1px solid #ddd;
+                margin:24px 0;
+            ">
 
             <p style="font-size:13px;color:#666;">
-                This email was generated automatically by Master Scholarship Hunter.
+                This email was generated automatically by
+                Master Scholarship Hunter.
             </p>
         </div>
     </body>
@@ -178,55 +184,64 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
 async def send_scholarship_email(
     items: list[dict[str, Any]],
 ) -> None:
-    api_key = _get_required_env("RESEND_API_KEY")
+    gmail_address = _get_required_env("GMAIL_ADDRESS")
+    app_password = _get_required_env("GMAIL_APP_PASSWORD")
     to_address = _get_required_env("EMAIL_TO")
-    from_address = _get_required_env("EMAIL_FROM")
 
-    relevant = [item for item in items if _is_relevant(item)]
+    # Google may display the app password with spaces.
+    # Remove them automatically.
+    app_password = "".join(app_password.split())
+
+    relevant = [
+        item for item in items
+        if _is_relevant(item)
+    ]
 
     subject = (
-        f"🎓 Scholarship Hunter — {len(relevant)} "
-        f"matching scholarship(s)"
+        f"🎓 Scholarship Hunter — "
+        f"{len(relevant)} matching scholarship(s)"
     )
 
-    payload = {
-        "from": from_address,
-        "to": [to_address],
-        "subject": subject,
-        "html": build_email_html(items),
-    }
+    message = EmailMessage()
+    message["From"] = gmail_address
+    message["To"] = to_address
+    message["Subject"] = subject
 
-    request = urllib.request.Request(
-        RESEND_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+    html = build_email_html(items)
+
+    message.set_content(
+        "Your scholarship results are available in the HTML version "
+        "of this email."
     )
+    message.add_alternative(html, subtype="html")
+
+    context = ssl.create_default_context()
 
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            response_body = response.read().decode("utf-8")
-
-        response_data = json.loads(response_body)
-
-        email_id = response_data.get("id", "unknown")
+        with smtplib.SMTP_SSL(
+            "smtp.gmail.com",
+            465,
+            context=context,
+            timeout=30,
+        ) as server:
+            server.login(
+                gmail_address,
+                app_password,
+            )
+            server.send_message(message)
 
         print(
-            f"Scholarship email sent successfully. "
-            f"Resend email ID: {email_id}"
+            f"Scholarship email sent successfully to {to_address}. "
+            f"Matching scholarships: {len(relevant)}"
         )
 
-    except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="replace")
-
+    except smtplib.SMTPAuthenticationError as error:
         raise RuntimeError(
-            f"Resend API returned HTTP {error.code}: {error_body}"
+            "Gmail authentication failed. Check GMAIL_ADDRESS "
+            "and GMAIL_APP_PASSWORD."
         ) from error
 
-    except urllib.error.URLError as error:
+    except smtplib.SMTPException as error:
         raise RuntimeError(
-            f"Could not connect to Resend: {error}"
+            f"Gmail SMTP error: {error}"
         ) from error
