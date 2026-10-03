@@ -81,8 +81,7 @@ def page_text(context: BeautifulSoupCrawlingContext) -> str:
 def is_wms(url: str) -> bool:
     try:
         hostname = (
-            urlparse(url)
-            .hostname
+            urlparse(url).hostname
             or ""
         ).lower()
 
@@ -728,15 +727,9 @@ async def start_handler(
         ):
             continue
 
+        # Crawlee expects URL strings here.
         await context.add_requests(
-            [
-                {
-                    "url": absolute_url,
-                    "user_data": {
-                        "label": "SCHOLARSHIP"
-                    },
-                }
-            ]
+            [absolute_url]
         )
 
         found += 1
