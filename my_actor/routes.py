@@ -17,33 +17,7 @@ router = Router[BeautifulSoupCrawlingContext]()
 # STUDENT PROFILE
 # ============================================================
 
-STUDENT_PROFILE = {
-    "nationality": "Benin",
-    "country": "Benin",
-    "date_of_birth": "2002-03-13",
-    "cgpa": 6.0,
-    "cgpa_scale": 10.0,
-    "degree": "Master",
-    "field": "Computer Science / IT",
-    "preferred_destinations": [
-        "Germany",
-        "France",
-        "Netherlands",
-        "Belgium",
-        "Finland",
-        "Sweden",
-        "Norway",
-        "Denmark",
-        "United Kingdom",
-        "Ireland",
-        "Canada",
-        "Australia",
-        "Austria",
-        "Switzerland",
-        "Luxembourg",
-    ],
-}
-
+from .profile_rules import STUDENT_PROFILE, strict_match
 
 # ============================================================
 # CONFIGURATION
@@ -1748,18 +1722,19 @@ async def process_scholarship(
     )
 
     # --------------------------------------------------------
-    # Matching
+    # Strict profile matching (v2)
     # --------------------------------------------------------
 
-    match = calculate_match(
+    match = strict_match(
         title=title,
         degree=degree,
         courses=courses,
         nationality=nationality,
-        destination_country=destination_country,
+        destination=destination_country,
         deadline=deadline,
         cgpa_requirements=cgpa_requirements,
         funding=funding,
+        page_text=page_text,
     )
 
     # --------------------------------------------------------
@@ -1782,6 +1757,19 @@ async def process_scholarship(
         "reasons": match["reasons"],
 
         "warnings": match["warnings"],
+
+        # Strict profile decision details.
+        "recommendation": match["recommendation"],
+        "profile_version": match["profile_version"],
+        "profile_rule": match["profile_rule"],
+        "degree_match": match["degree_match"],
+        "field_match": match["field_match"],
+        "nationality_match": match["nationality_match"],
+        "funding_status": match["funding_status"],
+        "destination_match": match["destination_match"],
+        "application_from_abroad": match["application_from_abroad"],
+        "cgpa_match": match["cgpa_match"],
+        "deadline_state": match["deadline_state"],
 
         "student_profile": STUDENT_PROFILE,
 
@@ -1877,6 +1865,9 @@ async def process_scholarship(
         f"{title} | "
         f"score={match['match_score']} | "
         f"status={match['match_status']} | "
+        f"funding={match['funding_status']} | "
+        f"field={match['field_match']} | "
+        f"abroad={match['application_from_abroad']} | "
         f"country={destination_country or 'UNKNOWN'}"
     )
 
