@@ -1,16 +1,18 @@
-"""Extensible discovery-source registry for Master Scholarship Hunter.
+"""Source registry for Master Scholarship Hunter.
 
-Each source has an explicit discovery strategy.  The crawler currently has a
-structured adapter for WeMakeScholars; official pages are deliberately not
-forced through that parser because their markup and eligibility vocabulary
-differ.  They can be enabled with direct URLs and source-specific adapters as
-they are added.
+The registry is derived from real source adapters
+(``my_actor.source_adapters``): a source appears here if and only if an
+adapter object describes it. Nothing is listed as supported unless its
+adapter actually parses discovery pages. Sources whose discovery URL could
+not be verified stay ``enabled = False`` with a documented reason.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from urllib.parse import urlparse
+
+from .source_adapters import build_adapters
+from .source_adapters.base import SourceAdapter, host_in_domains
 
 
 @dataclass(frozen=True)
@@ -23,36 +25,110 @@ class SourceDefinition:
     enabled: bool
     discovery_strategy: str
     notes: str
+    # Extended multi-source metadata (all derived from the live adapter).
+    discovery_supported: bool = False
+    verification_supported: bool = False
+    status: str = "disabled"
+    status_reason: str = ""
+    destination: str = ""
+    official_domains: tuple[str, ...] = ()
 
 
-SOURCE_REGISTRY: tuple[SourceDefinition, ...] = (
-    SourceDefinition("wemakescholars", "WeMakeScholars", ("https://www.wemakescholars.com/Masters-scholarships-in-computer-sciences-and-information-technology-to-study-abroad",), "reputable_aggregator", 40, True, "listing_then_detail", "Discovery source; strong matches require official evidence."),
-    SourceDefinition("erasmus_mundus", "Erasmus Mundus", ("https://erasmus-plus.ec.europa.eu/",), "official_program", 100, False, "source_specific_adapter", "EU master's joint-programme scholarships."),
-    SourceDefinition("daad", "DAAD", ("https://www.daad.de/en/",), "official_government", 100, False, "source_specific_adapter", "German Academic Exchange Service."),
-    SourceDefinition("chevening", "Chevening", ("https://www.chevening.org/",), "official_government", 100, False, "source_specific_adapter", "UK government scholarship programme."),
-    SourceDefinition("commonwealth", "Commonwealth Scholarships", ("https://cscuk.fcdo.gov.uk/",), "official_government", 100, False, "source_specific_adapter", "UK Commonwealth Scholarship Commission."),
-    SourceDefinition("swedish_institute", "Swedish Institute", ("https://si.se/en/",), "official_government", 100, False, "source_specific_adapter", "Swedish Institute scholarships."),
-    SourceDefinition("vlir_uos", "VLIR-UOS", ("https://www.vliruos.be/en",), "official_program", 95, False, "source_specific_adapter", "Belgian development cooperation scholarships."),
-    SourceDefinition("ares", "ARES", ("https://www.ares-ac.be/",), "official_program", 95, False, "source_specific_adapter", "Belgian development cooperation scholarships."),
-    SourceDefinition("ireland", "Government of Ireland", ("https://hea.ie/",), "official_government", 95, False, "source_specific_adapter", "Government of Ireland international education awards."),
-    SourceDefinition("mext", "MEXT", ("https://www.mext.go.jp/en/",), "official_government", 100, False, "source_specific_adapter", "Japanese Government scholarship programme."),
-    SourceDefinition("mastercard_foundation", "Mastercard Foundation Scholars Program", ("https://mastercardfdn.org/",), "official_program", 95, False, "source_specific_adapter", "Partner-university programme for African students."),
-)
+def _definition_from_adapter(adapter: SourceAdapter, priority: int) -> SourceDefinition:
+    discovery_supported = bool(adapter.discovery_urls) and adapter.enabled
+    return SourceDefinition(
+        identifier=adapter.source_id,
+        name=adapter.display_name,
+        base_urls=adapter.discovery_urls,
+        source_type=adapter.source_type,
+        priority=priority,
+        enabled=adapter.enabled,
+        discovery_strategy=adapter.discovery_strategy,
+        notes=adapter.notes or adapter.status_reason,
+        discovery_supported=discovery_supported,
+        verification_supported=adapter.enabled,
+        status="enabled" if adapter.enabled else "disabled",
+        status_reason=adapter.status_reason,
+        destination=adapter.destination,
+        official_domains=adapter.official_domains,
+    )
+
+
+def _build_registry() -> tuple[SourceDefinition, ...]:
+    priorities = {
+        "wemakescholars": 40,
+        "erasmus_mundus": 100,
+        "daad": 100,
+        "vlir_uos": 95,
+        "chevening": 100,
+        "goi_ies": 95,
+        "mext": 100,
+        "mastercard_foundation": 95,
+        "nl_scholarship": 60,
+        "si_sweden": 90,
+        "finland": 70,
+        "norway": 70,
+        "switzerland": 80,
+        "austria": 80,
+        "australia": 85,
+    }
+    return tuple(
+        _definition_from_adapter(adapter, priorities.get(adapter.source_id, 50))
+        for adapter in build_adapters()
+    )
+
+
+SOURCE_REGISTRY: tuple[SourceDefinition, ...] = _build_registry()
+
+
+def get_adapter(source_id: str) -> SourceAdapter | None:
+    for adapter in build_adapters():
+        if adapter.source_id == (source_id or "").strip().lower():
+            return adapter
+    return None
 
 
 def source_by_url(url: str) -> SourceDefinition | None:
-    hostname = (urlparse(url).hostname or "").lower()
     for source in SOURCE_REGISTRY:
-        domains = {(urlparse(base).hostname or "").lower() for base in source.base_urls}
-        if any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains):
+        if host_in_domains(url, source.official_domains):
             return source
     return None
 
 
 def configured_sources(source_ids: list[str] | None = None) -> list[SourceDefinition]:
-    selected = {item.strip().lower() for item in source_ids or [] if item.strip()}
-    return [source for source in SOURCE_REGISTRY if source.enabled or source.identifier in selected]
+    """Return production sources, or an explicit selection.
+
+    ``None`` (or ``[]``) means the production default: every enabled source.
+    ``["all"]`` selects every known source including disabled ones (disabled
+    adapters still skip themselves at runtime with a logged reason).
+    Otherwise only the named identifiers are returned.
+    """
+    if not source_ids:
+        return [source for source in SOURCE_REGISTRY if source.enabled]
+    selected = {item.strip().lower() for item in source_ids if item.strip()}
+    if "all" in selected:
+        return list(SOURCE_REGISTRY)
+    return [source for source in SOURCE_REGISTRY if source.identifier in selected]
+
+
+def enabled_source_ids() -> list[str]:
+    return [source.identifier for source in SOURCE_REGISTRY if source.enabled]
 
 
 def registry_as_dicts() -> list[dict[str, object]]:
     return [asdict(source) for source in SOURCE_REGISTRY]
+
+
+def status_table() -> list[dict[str, str]]:
+    """Exactly which sources are enabled/disabled and why (for logs/README)."""
+    return [
+        {
+            "source_id": source.identifier,
+            "name": source.name,
+            "status": source.status,
+            "discovery": "supported" if source.discovery_supported else "unsupported",
+            "verification": "supported" if source.verification_supported else "unsupported",
+            "reason": source.status_reason,
+        }
+        for source in SOURCE_REGISTRY
+    ]

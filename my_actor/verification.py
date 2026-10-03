@@ -57,6 +57,16 @@ def _is_external_non_social(url: str, discovery_url: str) -> bool:
     return not any(host == domain or host.endswith(f".{domain}") for domain in SOCIAL_OR_TRACKING_DOMAINS)
 
 
+def is_acceptable_official_link(url: str, discovery_url: str) -> bool:
+    """Public gate for adapter follow-up links: external, non-social only.
+
+    Adapters additionally constrain accepted hosts to their official domains
+    or explicitly linked programme/application pages; this shared check
+    guarantees social, tracking, and same-page links never pass.
+    """
+    return _is_external_non_social(url, discovery_url)
+
+
 def _score_candidate(candidate: LinkCandidate, provider: str) -> int:
     text = re.sub(r"\s+", " ", candidate.text).strip().lower()
     score = 0
@@ -102,7 +112,11 @@ def official_source_type(url: str) -> str:
 def extract_structured_fields(text: str) -> dict[str, str]:
     """Extract only labelled source fields from flattened page text."""
     text = re.sub(r"\s+", " ", text).strip()
-    boundaries = r"(?=\s+(?:Eligible|Eligibility|Funding|Deadline|Application|Provider|Scholarship can be taken|Can be taken|Study at|Overview|Details|Benefits|Requirements|Country of study|Minimum|Degree|Field of study|Residency)\b|\s*$)"
+    # A boundary keyword only terminates a value when it behaves like a new
+    # label (the keyword plus at most two words, then a colon) or at the end
+    # of the text. This prevents in-value phrases such as "eligible for
+    # admission" or "Africans from eligible countries" from cutting evidence.
+    boundaries = r"(?=\s+(?:Eligible|Eligibility|Funding|Deadline|Application|Provider|Scholarship can be taken|Can be taken|Study at|Overview|Details|Benefits|Requirements|Country of study|Minimum|Degree|Field of study|Residency)(?:\s+[A-Za-z]+){0,2}\s*:|\s*$)"
     fields: dict[str, str] = {}
     for name, labels in FIELD_LABELS.items():
         fields[name] = ""

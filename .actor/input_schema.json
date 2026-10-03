@@ -12,6 +12,27 @@
       "prefill": [{"url": "https://www.wemakescholars.com/Masters-scholarships-in-computer-sciences-and-information-technology-to-study-abroad"}],
       "editor": "requestListSources"
     },
+    "sources": {
+      "title": "Discovery sources",
+      "type": "array",
+      "description": "Source ids to crawl (for example wemakescholars, erasmus_mundus, daad, vlir_uos, chevening, goi_ies, mext, mastercard_foundation). Use [\"all\"] for every known source. When omitted, all enabled production sources are used.",
+      "prefill": ["wemakescholars", "erasmus_mundus", "daad", "vlir_uos", "chevening", "goi_ies", "mext", "mastercard_foundation"],
+      "editor": "stringList"
+    },
+    "max_results_per_source": {
+      "title": "Maximum records per source",
+      "type": "integer",
+      "description": "Bounded discovery cap applied separately to each source.",
+      "default": 50,
+      "minimum": 1,
+      "maximum": 200
+    },
+    "verify_official": {
+      "title": "Verify against official pages",
+      "type": "boolean",
+      "description": "Follow official programme/application links and merge official evidence. Disable only for debugging discovery.",
+      "default": true
+    },
     "max_requests_per_crawl": {
       "title": "Maximum pages per run",
       "type": "integer",

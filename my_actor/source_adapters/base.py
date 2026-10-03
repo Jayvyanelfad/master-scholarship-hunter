@@ -1,0 +1,239 @@
+"""Expandable source-adapter framework for Master Scholarship Hunter.
+
+Every discovery source is described by a small adapter object. An adapter
+parses listing pages into candidate detail URLs and detail pages into shared
+evidence fields. Adapters use only the standard library so their parsing can
+be unit-tested without Apify, Crawlee, or network access.
+
+Design rules for every adapter:
+
+- Never invent facts. Only extract what the fetched page states.
+- Never treat a discovery/listing page as the scholarship itself.
+- Only same-organisation official domains (``official_domains``) or pages
+  explicitly linked as the official programme/application page from a
+  recognized source may become official evidence.
+- Social, tracking, search-result, and unrelated outbound links are never
+  official evidence (enforced in ``my_actor.verification``).
+- Nationality (citizenship) and residence (where the applicant lives) are
+  separate fields. "Studying in India" must never become "Indian national".
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlparse
+
+
+SHARED_FIELD_KEYS = (
+    "degree", "field", "funding", "nationality", "destination",
+    "deadline", "cgpa", "provider", "application_location",
+)
+
+
+def blank_fields() -> dict[str, str]:
+    """Shared evidence-field dict every adapter fills from page content."""
+    return {key: "" for key in SHARED_FIELD_KEYS}
+
+
+class _LinkExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[tuple[str, str]] = []
+        self._href = ""
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self._href = dict(attrs).get("href", "") or ""
+            self._text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._href:
+            text = re.sub(r"\s+", " ", "".join(self._text)).strip()
+            self.links.append((self._href, text))
+            self._href = ""
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "nav", "footer"}:
+            self._skip += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "nav", "footer"} and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip:
+            self.parts.append(data)
+
+
+def extract_links(html: str) -> list[tuple[str, str]]:
+    """Return ``(href, anchor_text)`` pairs in document order."""
+    parser = _LinkExtractor()
+    try:
+        parser.feed(html or "")
+    except Exception:
+        pass
+    return parser.links
+
+
+def extract_text(html: str) -> str:
+    """Return flattened visible page text with collapsed whitespace."""
+    parser = _TextExtractor()
+    try:
+        parser.feed(html or "")
+    except Exception:
+        pass
+    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+
+
+def extract_title(html: str) -> str:
+    """Return the first ``h1`` text, falling back to ``<title>``."""
+
+    class TitleParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.h1: list[str] = []
+            self.title: list[str] = []
+            self._active: str | None = None
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag in {"h1", "title"} and self._active is None:
+                self._active = tag
+
+        def handle_data(self, data: str) -> None:
+            if self._active == "h1":
+                self.h1.append(data)
+            elif self._active == "title":
+                self.title.append(data)
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == self._active:
+                self._active = None
+
+    parser = TitleParser()
+    try:
+        parser.feed(html or "")
+    except Exception:
+        pass
+    heading = re.sub(r"\s+", " ", "".join(parser.h1)).strip()
+    if heading:
+        return heading
+    return re.sub(r"\s+", " ", "".join(parser.title)).strip()
+
+
+def hostname(url: str) -> str:
+    return (urlparse(url).hostname or "").lower()
+
+
+def host_in_domains(url: str, domains: tuple[str, ...]) -> bool:
+    host = hostname(url)
+    wanted = {domain.lower().lstrip(".") for domain in domains}
+    return any(host == domain or host.endswith(f".{domain}") for domain in wanted)
+
+
+def absolutize(base_url: str, href: str) -> str:
+    return urljoin(base_url, href or "")
+
+
+@dataclass(frozen=True)
+class DiscoveryCandidate:
+    """One candidate detail page found on a listing page."""
+
+    url: str
+    title: str = ""
+    context: str = ""
+
+
+@dataclass(frozen=True)
+class DetailResult:
+    """Evidence extracted from one detail page.
+
+    ``fields`` uses the shared evidence keys. ``residence_countries`` holds
+    ONLY an extracted eligible-country residence list (never free page text).
+    ``requirement_text`` holds ONLY mandatory applicant-requirement sentences
+    (work experience, leadership) used for profile-requirement gap detection.
+    ``follow_links`` holds deeper official pages (partner-university model).
+    ``is_hop`` marks index/catalogue pages that only resolve deeper official
+    pages: routes enqueue the follow-ups without storing a stub record.
+    """
+
+    title: str
+    fields: dict[str, str]
+    residence_countries: str = ""
+    requirement_text: str = ""
+    follow_links: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+    is_hop: bool = False
+
+
+@dataclass(frozen=True)
+class ListingResult:
+    candidates: tuple[DiscoveryCandidate, ...] = ()
+    next_page_url: str | None = None
+
+
+@dataclass
+class SourceAdapter:
+    """Base class for one discovery source.
+
+    Subclasses fill in the declarative attributes and the two parsers.
+    ``detail_is_official`` marks sources whose own detail pages already are
+    official evidence (DAAD, VLIR-UOS, Chevening, ...). Aggregators such as
+    WeMakeScholars set it to ``False`` so a second official hop is required.
+    """
+
+    source_id: str = ""
+    display_name: str = ""
+    source_type: str = "official_program"
+    discovery_urls: tuple[str, ...] = ()
+    discovery_strategy: str = ""
+    pagination: str = "none"
+    max_pages: int = 5
+    max_records: int = 50
+    official_domains: tuple[str, ...] = ()
+    destination: str = ""
+    detail_is_official: bool = True
+    enabled: bool = False
+    status_reason: str = ""
+    notes: str = ""
+
+    def is_listing_url(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return host_in_domains(url, self.official_domains) and any(
+            token in path for token in ("scholarship", "funding", "grant", "opportunit", "catalogue", "program", "finance")
+        )
+
+    def is_detail_url(self, url: str) -> bool:
+        return False
+
+    def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        return ListingResult()
+
+    def parse_detail(self, html: str, url: str) -> DetailResult:
+        return DetailResult(title=extract_title(html), fields=blank_fields())
+
+
+def dedup_key(title: str, provider: str, destination: str, official_url: str = "", discovery_url: str = "") -> str:
+    """Stable cross-source identity key.
+
+    The canonical official URL wins when verification succeeded, so the same
+    scholarship discovered via WeMakeScholars and DAAD collapses to one
+    record. Otherwise identity falls back to normalized discovery evidence.
+    """
+    if official_url:
+        return f"official|{official_url.strip().lower().rstrip('/')}"
+    norm = lambda value: re.sub(r"\s+", " ", (value or "")).strip().lower()
+    return "|".join(("discovery", norm(title), norm(provider), norm(destination), (discovery_url or "").strip().lower().rstrip("/")))

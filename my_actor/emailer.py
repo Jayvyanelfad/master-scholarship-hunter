@@ -202,6 +202,7 @@ def _scholarship_card(
 def build_email_html(
     items: list[dict[str, Any]],
     diagnostics: dict[str, int] | None = None,
+    source_health: dict[str, Any] | None = None,
 ) -> str:
 
     included = [
@@ -215,7 +216,45 @@ def build_email_html(
         diagnostic_rows = "".join(
             f"<li>{escape(key.replace('_', ' ').title())}: {value}</li>"
             for key, value in diagnostics.items()
+            if not str(key).startswith("reason_")
         )
+        reason_labels = {
+            "reason_non_masters": "Non-Master's level",
+            "reason_not_fully_funded": "Not fully funded",
+            "reason_field_mismatch": "Field mismatch",
+            "reason_nationality_mismatch": "Nationality mismatch",
+            "reason_destination_mismatch": "Destination mismatch",
+            "reason_abroad_restriction": "Abroad/residence restriction",
+            "reason_expired": "Expired",
+            "reason_insufficient_evidence": "Insufficient evidence",
+            "reason_possible_matches": "Possible (needs more evidence)",
+        }
+        reason_rows = "".join(
+            f"<li>{escape(label)}: {diagnostics.get(key, 0)}</li>"
+            for key, label in reason_labels.items()
+            if diagnostics.get(key, 0)
+        )
+        if reason_rows:
+            reason_rows = (
+                "<h3>Rejection reasons</h3>"
+                "<ul>" + reason_rows + "</ul>"
+            )
+        source_rows = ""
+        if source_health:
+            entries = "".join(
+                f"<li>{escape(str(entry.get('display_name', source_id)))}: "
+                f"{entry.get('discovered', 0)} discovered, "
+                f"{entry.get('official_fetched', 0)} official checked, "
+                f"{entry.get('verified', 0)} verified strong, "
+                f"{entry.get('errors', 0)} errors</li>"
+                for source_id, entry in source_health.items()
+                if isinstance(entry, dict)
+            )
+            if entries:
+                source_rows = (
+                    "<h3>Sources checked</h3>"
+                    "<ul>" + entries + "</ul>"
+                )
         return """
         <html>
         <body style="
@@ -247,6 +286,8 @@ def build_email_html(
                 </p>
 
                 <ul>""" + diagnostic_rows + """</ul>
+
+                """ + source_rows + reason_rows + """
 
             </div>
 
@@ -329,6 +370,7 @@ def build_email_html(
 async def send_scholarship_email(
     items: list[dict[str, Any]],
     diagnostics: dict[str, int] | None = None,
+    source_health: dict[str, Any] | None = None,
 ) -> None:
     # Keep the rendering helpers usable in isolated unit tests; importing the
     # SDK here still ensures runtime logs are censored by Actor.log.
@@ -369,7 +411,7 @@ async def send_scholarship_email(
     message["To"] = to_address
     message["Subject"] = subject
 
-    html = build_email_html(items, diagnostics)
+    html = build_email_html(items, diagnostics, source_health)
 
     message.set_content(
         "Your strict scholarship results are "
