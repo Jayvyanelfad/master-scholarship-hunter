@@ -1,38 +1,19 @@
 {
-    "$schema": "https://apify.com/schemas/v1/dataset.ide.json",
-    "actorSpecification": 1,
-    "fields": {},
-    "views": {
-        "overview": {
-            "title": "Overview",
-            "transformation": {
-                "fields": ["title", "url", "h1s", "h2s", "h3s"]
-            },
-            "display": {
-                "component": "table",
-                "properties": {
-                    "title": {
-                        "label": "Title",
-                        "format": "text"
-                    },
-                    "url": {
-                        "label": "URL",
-                        "format": "link"
-                    },
-                    "h1s": {
-                        "label": "H1s",
-                        "format": "array"
-                    },
-                    "h2s": {
-                        "label": "H2s",
-                        "format": "array"
-                    },
-                    "h3s": {
-                        "label": "H3s",
-                        "format": "array"
-                    }
-                }
-            }
-        }
-    }
+  "$schema": "https://apify.com/schemas/v1/dataset.ide.json",
+  "actorSpecification": 1,
+  "fields": {
+    "record_type": {"type": "string", "description": "Record category."},
+    "title": {"type": "string", "description": "Scholarship title."}, "url": {"type": "string", "description": "Final evidence page URL."}, "discovery_url": {"type": "string", "description": "WeMakeScholars discovery URL."}, "official_url": {"type": "string", "description": "Qualified official verification URL, when found."}, "canonical_url": {"type": "string", "description": "Normalized discovery URL used for deduplication."},
+    "source_name": {"type": "string", "description": "Discovery source name."}, "source_domain": {"type": "string", "description": "Discovery source domain."}, "source_type": {"type": "string", "description": "Discovery source classification."}, "official_source_domain": {"type": "string", "description": "Official verification source domain."}, "official_source_type": {"type": "string", "description": "Official verification source classification."}, "verification_status": {"type": "string", "description": "verified, partially_verified, or unverified."}, "provider": {"type": "string", "description": "Exact structured scholarship provider."},
+    "degree_requirements": {"type": "string", "description": "Exact structured degree field."}, "degree_match": {"type": "string", "description": "Master's eligibility decision."}, "degree_evidence": {"type": "array", "description": "Evidence objects for degree."},
+    "field_requirements": {"type": "string", "description": "Exact structured field field."}, "field_match": {"type": "string", "description": "Computing field decision."}, "field_evidence": {"type": "array", "description": "Evidence objects for field."},
+    "funding": {"type": "string", "description": "Exact structured funding field."}, "funding_status": {"type": "string", "description": "verified_full, excluded, or unknown."}, "funding_evidence": {"type": "array", "description": "Evidence objects for funding."},
+    "nationality_requirements": {"type": "string", "description": "Exact structured nationality field."}, "nationality_match": {"type": "string", "description": "eligible, excluded, or unknown."}, "nationality_confidence": {"type": "string", "description": "high, medium, or low."}, "nationality_evidence": {"type": "array", "description": "Evidence objects for Benin eligibility."},
+    "destination": {"type": "string", "description": "Structured study destination."}, "destination_match": {"type": "string", "description": "Destination eligibility decision."}, "destination_evidence": {"type": "array", "description": "Evidence objects for destination."},
+    "application_from_abroad": {"type": "string", "description": "Whether application from India is eligible."}, "application_location_evidence": {"type": "array", "description": "Evidence objects for applicant location."}, "cgpa_requirements": {"type": "string", "description": "Exact structured CGPA/GPA requirement."}, "cgpa_match": {"type": "string", "description": "Preserved CGPA compatibility decision."}, "cgpa_evidence": {"type": "array", "description": "Evidence objects for CGPA."},
+    "deadline_state": {"type": "string", "description": "active, upcoming, expired, or unknown."}, "deadlines": {"type": "array", "description": "Relevant normalized deadline values."}, "deadline_evidence": {"type": "array", "description": "Evidence objects for deadline."},
+    "discovery_evidence": {"type": "object", "description": "Structured evidence extracted from the discovery page."}, "official_evidence": {"type": "object", "description": "Structured evidence extracted from the official page."}, "match_status": {"type": "string", "description": "strong_match, possible_match, or rejected."}, "match_score": {"type": "integer", "description": "Score assigned only after hard gates pass."}, "recommendation": {"type": "string", "description": "include only for strong_match."}, "reasons": {"type": "array", "description": "Auditable eligibility reasoning."}, "warnings": {"type": "array", "description": "Unresolved evidence warnings."},
+    "student_profile": {"type": "object", "description": "Fixed target student profile."}, "profile_version": {"type": "string", "description": "Ruleset version."}, "profile_rule": {"type": "string", "description": "Applied fixed profile rule."}
+  },
+  "views": {"overview": {"title": "Scholarship matches", "transformation": {"fields": ["title", "destination", "funding_status", "nationality_match", "deadline_state", "match_status", "url"]}, "display": {"component": "table", "properties": {"title": {"label": "Title", "format": "text"}, "destination": {"label": "Destination", "format": "text"}, "funding_status": {"label": "Funding", "format": "text"}, "nationality_match": {"label": "Nationality", "format": "text"}, "deadline_state": {"label": "Deadline", "format": "text"}, "match_status": {"label": "Match", "format": "text"}, "url": {"label": "Source", "format": "link"}}}}}
 }

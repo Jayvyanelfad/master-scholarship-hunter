@@ -9,7 +9,6 @@ from email.message import EmailMessage
 from html import escape
 from typing import Any
 
-
 def _get_required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
 
@@ -202,6 +201,7 @@ def _scholarship_card(
 
 def build_email_html(
     items: list[dict[str, Any]],
+    diagnostics: dict[str, int] | None = None,
 ) -> str:
 
     included = [
@@ -211,6 +211,11 @@ def build_email_html(
     ]
 
     if not included:
+        diagnostics = diagnostics or {}
+        diagnostic_rows = "".join(
+            f"<li>{escape(key.replace('_', ' ').title())}: {value}</li>"
+            for key, value in diagnostics.items()
+        )
         return """
         <html>
         <body style="
@@ -233,17 +238,15 @@ def build_email_html(
                 </h1>
 
                 <p>
-                    No scholarships passed the strict profile
-                    requirements in this run.
+                    No verified strong matches this run.
                 </p>
 
                 <p style="color:#666;">
-                    The Actor checked the available scholarship
-                    records and excluded opportunities that did
-                    not satisfy the required degree, funding,
-                    field, nationality, destination, and
-                    application-location rules.
+                    These diagnostics distinguish a lack of matches
+                    from incomplete source evidence.
                 </p>
+
+                <ul>""" + diagnostic_rows + """</ul>
 
             </div>
 
@@ -325,7 +328,12 @@ def build_email_html(
 
 async def send_scholarship_email(
     items: list[dict[str, Any]],
+    diagnostics: dict[str, int] | None = None,
 ) -> None:
+    # Keep the rendering helpers usable in isolated unit tests; importing the
+    # SDK here still ensures runtime logs are censored by Actor.log.
+    from apify import Actor
+
 
     gmail_address = _get_required_env(
         "GMAIL_ADDRESS"
@@ -361,7 +369,7 @@ async def send_scholarship_email(
     message["To"] = to_address
     message["Subject"] = subject
 
-    html = build_email_html(items)
+    html = build_email_html(items, diagnostics)
 
     message.set_content(
         "Your strict scholarship results are "
@@ -393,9 +401,8 @@ async def send_scholarship_email(
                 message
             )
 
-        print(
-            "Scholarship email sent successfully "
-            f"to {to_address}. "
+        Actor.log.info(
+            "Scholarship email sent successfully. "
             f"Strict matches: {len(included)}"
         )
 

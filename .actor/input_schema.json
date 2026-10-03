@@ -1,20 +1,24 @@
 {
-    "$schema": "https://apify.com/schemas/v1/input.ide.json",
-    "title": "Python Crawlee BeautifulSoup Scraper",
-    "type": "object",
-    "schemaVersion": 1,
-    "properties": {
-        "start_urls": {
-            "title": "Start URLs",
-            "type": "array",
-            "description": "URLs to start with",
-            "prefill": [
-                {
-                    "url": "https://apify.com"
-                }
-            ],
-            "editor": "requestListSources"
-        }
+  "$schema": "https://apify.com/schemas/v1/input.ide.json",
+  "title": "Master Scholarship Hunter",
+  "description": "Broad multi-source scholarship discovery with official-source verification for a fixed Beninese Master's computing profile.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "start_urls": {
+      "title": "Additional start URLs",
+      "type": "array",
+      "description": "Optional official programme or supported discovery listing URLs. Entries may be URL strings or {url} objects.",
+      "prefill": [{"url": "https://www.wemakescholars.com/Masters-scholarships-in-computer-sciences-and-information-technology-to-study-abroad"}],
+      "editor": "requestListSources"
     },
-    "required": ["start_urls"]
+    "max_requests_per_crawl": {
+      "title": "Maximum pages per run",
+      "type": "integer",
+      "description": "Safety limit for discovery and verification pages.",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 500
+    }
+  }
 }
