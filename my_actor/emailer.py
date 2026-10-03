@@ -1,4 +1,4 @@
-"""Send only strictly matched scholarship results through Gmail SMTP."""
+"""Send strict scholarship results through Gmail SMTP."""
 
 from __future__ import annotations
 
@@ -12,84 +12,121 @@ from typing import Any
 
 def _get_required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
+
     if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
+        raise RuntimeError(
+            f"Missing required environment variable: {name}"
+        )
+
     return value
 
 
-def _score(item: dict[str, Any]) -> float:
-    try:
-        return float(item.get("match_score", 0) or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _is_relevant(item: dict[str, Any]) -> bool:
+def _is_included(item: dict[str, Any]) -> bool:
     """
-    Strict email filter.
-
-    A scholarship reaches the daily email only when the strict matcher
-    has explicitly marked it for inclusion and verified full funding.
+    Only send scholarships that passed the strict profile matcher.
     """
+
+    recommendation = str(
+        item.get("recommendation", "")
+    ).strip().lower()
+
+    status = str(
+        item.get("match_status", "")
+    ).strip().lower()
+
     return (
-        str(item.get("recommendation", "")).strip().lower() == "include"
-        and str(item.get("match_status", "")).strip().lower() == "strong_match"
-        and str(item.get("funding_status", "")).strip().lower() == "verified_full"
+        recommendation == "include"
+        and status == "strong_match"
     )
 
 
-def _clean(value: Any, default: str = "Not specified") -> str:
+def _clean(
+    value: Any,
+    default: str = "Not specified",
+) -> str:
+
     if value is None:
         return default
 
     if isinstance(value, list):
-        values = [str(v).strip() for v in value if str(v).strip()]
+        values = [
+            str(v).strip()
+            for v in value
+            if str(v).strip()
+        ]
+
         return ", ".join(values) if values else default
 
-    if isinstance(value, dict):
-        if "raw" in value:
-            return _clean(value.get("raw"), default)
-        return ", ".join(
-            f"{k}: {v}" for k, v in value.items()
-            if str(v).strip()
-        ) or default
-
     text = str(value).strip()
+
     return text or default
 
 
-def _reasons(item: dict[str, Any]) -> str:
-    values = item.get("reasons", [])
-    if not isinstance(values, list):
-        return _clean(values)
+def _scholarship_card(
+    item: dict[str, Any],
+) -> str:
 
-    good = [
-        str(v).strip()
-        for v in values
-        if str(v).strip()
-    ]
+    title = escape(
+        _clean(
+            item.get("title"),
+            "Scholarship",
+        )
+    )
 
-    return "<br>".join(
-        f"✓ {escape(value)}"
-        for value in good[:8]
-    ) or "Strict profile checks passed."
+    url = str(
+        item.get("url", "")
+    ).strip()
 
+    destination = escape(
+        _clean(item.get("destination"))
+    )
 
-def _scholarship_card(item: dict[str, Any]) -> str:
-    title = escape(_clean(item.get("title"), "Scholarship"))
-    url = str(item.get("url", "")).strip()
+    degree = escape(
+        _clean(item.get("degree_requirements"))
+    )
 
-    destination = escape(_clean(item.get("destination")))
-    degree = escape(_clean(item.get("degree_requirements")))
-    field = escape(_clean(item.get("field_requirements")))
-    deadline = escape(_clean(item.get("deadlines")))
-    funding = escape(_clean(item.get("funding")))
-    reasons = _reasons(item)
+    field = escape(
+        _clean(item.get("field_requirements"))
+    )
+
+    nationality = escape(
+        _clean(item.get("nationality_requirements"))
+    )
+
+    funding = escape(
+        _clean(item.get("funding"))
+    )
+
+    deadline = escape(
+        _clean(item.get("deadlines"))
+    )
+
+    reasons = item.get("reasons", [])
+
+    if isinstance(reasons, list):
+        reason_items = [
+            str(reason).strip()
+            for reason in reasons
+            if str(reason).strip()
+        ]
+    else:
+        reason_items = [str(reasons).strip()]
+
+    reason_html = "".join(
+        f"<li>{escape(reason)}</li>"
+        for reason in reason_items
+    )
+
+    if not reason_html:
+        reason_html = (
+            "<li>Passed all strict profile requirements.</li>"
+        )
 
     if url:
         link = (
             f'<a href="{escape(url)}" '
-            f'style="font-size:17px;font-weight:700;color:#176b5f;">'
+            f'style="font-size:17px;'
+            f'font-weight:700;">'
             f"{title}</a>"
         )
     else:
@@ -97,70 +134,92 @@ def _scholarship_card(item: dict[str, Any]) -> str:
 
     return f"""
     <div style="
-        border:1px solid #d9e2df;
+        border:1px solid #d9dee5;
         border-radius:12px;
         padding:18px;
         margin:0 0 18px 0;
         background:#ffffff;
     ">
+
         {link}
 
-        <p style="margin:10px 0 6px;">
-            <strong>Match:</strong> 100/100
-            &nbsp; | &nbsp;
-            <strong>Verified:</strong> Fully funded
+        <p style="margin:12px 0 6px;">
+            <strong>Destination:</strong>
+            {destination}
         </p>
 
         <p style="margin:6px 0;">
-            <strong>Destination:</strong> {destination}
+            <strong>Degree:</strong>
+            {degree}
         </p>
 
         <p style="margin:6px 0;">
-            <strong>Degree:</strong> {degree}
+            <strong>Field:</strong>
+            {field}
         </p>
 
         <p style="margin:6px 0;">
-            <strong>Field:</strong> {field}
+            <strong>Nationality:</strong>
+            {nationality}
         </p>
 
         <p style="margin:6px 0;">
-            <strong>Funding:</strong> {funding}
+            <strong>Funding:</strong>
+            {funding}
         </p>
 
         <p style="margin:6px 0;">
-            <strong>Deadline:</strong> {deadline}
+            <strong>Deadline:</strong>
+            {deadline}
         </p>
 
         <div style="
-            margin-top:12px;
+            margin-top:14px;
             padding:12px;
-            background:#f4f8f7;
+            background:#f6f8fa;
             border-radius:8px;
-            line-height:1.6;
         ">
-            <strong>Why it matched:</strong><br>
-            {reasons}
+            <strong>Why it matched:</strong>
+            <ul style="margin:8px 0 0 20px;">
+                {reason_html}
+            </ul>
         </div>
+
+        <p style="
+            margin:14px 0 0;
+            font-size:12px;
+            color:#777;
+        ">
+            Strict profile rule:
+            Master's only + full funding only +
+            CS/IT/AI + Benin eligible +
+            target country + apply from abroad
+        </p>
+
     </div>
     """
 
 
-def build_email_html(items: list[dict[str, Any]]) -> str:
-    relevant = [
-        item for item in items
-        if _is_relevant(item)
-    ]
-    relevant.sort(key=_score, reverse=True)
+def build_email_html(
+    items: list[dict[str, Any]],
+) -> str:
 
-    if not relevant:
+    included = [
+        item
+        for item in items
+        if _is_included(item)
+    ]
+
+    if not included:
         return """
         <html>
         <body style="
-            font-family:Arial,sans-serif;
+            font-family:Arial,Helvetica,sans-serif;
             background:#f6f7f9;
             padding:24px;
             color:#222;
         ">
+
             <div style="
                 max-width:760px;
                 margin:auto;
@@ -168,39 +227,45 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
                 padding:24px;
                 border-radius:12px;
             ">
-                <h1>🎓 Master Scholarship Hunter</h1>
 
-                <h2>No fully funded Master's matches today.</h2>
-
-                <p>
-                    Today's hunt completed successfully, but no scholarship
-                    passed all strict profile requirements.
-                </p>
+                <h1 style="margin-top:0;">
+                    🎓 Master Scholarship Hunter
+                </h1>
 
                 <p>
-                    Required profile:
-                    <strong>Beninese applicant · Master's only ·
-                    fully funded · Computer Science / IT / AI-related ·
-                    target country · eligible to apply from abroad.</strong>
+                    No scholarships passed the strict profile
+                    requirements in this run.
                 </p>
+
+                <p style="color:#666;">
+                    The Actor checked the available scholarship
+                    records and excluded opportunities that did
+                    not satisfy the required degree, funding,
+                    field, nationality, destination, and
+                    application-location rules.
+                </p>
+
             </div>
+
         </body>
         </html>
         """
 
     cards = "\n".join(
         _scholarship_card(item)
-        for item in relevant
+        for item in included
     )
 
     return f"""
     <html>
+
     <body style="
         font-family:Arial,Helvetica,sans-serif;
         background:#f6f7f9;
         padding:24px;
         color:#222;
     ">
+
         <div style="
             max-width:760px;
             margin:auto;
@@ -208,25 +273,30 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
             padding:24px;
             border-radius:12px;
         ">
+
             <h1 style="margin-top:0;">
                 🎓 Master Scholarship Hunter
             </h1>
 
-            <p style="font-size:16px;">
+            <p>
                 Today's hunt found
-                <strong>{len(relevant)}</strong>
-                <strong>fully funded Master's scholarship(s)</strong>
-                that passed all strict profile checks.
+                <strong>{len(included)}</strong>
+                scholarship(s) that passed your
+                <strong>strict profile requirements</strong>.
             </p>
 
             <p style="
-                background:#eef7f4;
                 padding:12px;
+                background:#f6f8fa;
                 border-radius:8px;
+                font-size:14px;
             ">
-                <strong>Your target:</strong>
-                Benin → Master's → Computer Science / IT / AI →
-                fully funded → target countries → application from abroad.
+                <strong>Your profile:</strong><br>
+                🇧🇯 Benin &nbsp;|&nbsp;
+                🎓 Master's only &nbsp;|&nbsp;
+                💰 Full funding only &nbsp;|&nbsp;
+                💻 CS / IT / AI &nbsp;|&nbsp;
+                🌍 Target countries only
             </p>
 
             {cards}
@@ -237,13 +307,18 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
                 margin:24px 0;
             ">
 
-            <p style="font-size:13px;color:#666;">
+            <p style="
+                font-size:13px;
+                color:#666;
+            ">
                 This email was generated automatically by
                 Master Scholarship Hunter.
-                Scholarships are filtered using the strict-v2 profile rules.
             </p>
+
         </div>
+
     </body>
+
     </html>
     """
 
@@ -251,24 +326,37 @@ def build_email_html(items: list[dict[str, Any]]) -> str:
 async def send_scholarship_email(
     items: list[dict[str, Any]],
 ) -> None:
-    gmail_address = _get_required_env("GMAIL_ADDRESS")
-    app_password = _get_required_env("GMAIL_APP_PASSWORD")
-    to_address = _get_required_env("EMAIL_TO")
 
-    app_password = "".join(app_password.split())
+    gmail_address = _get_required_env(
+        "GMAIL_ADDRESS"
+    )
 
-    relevant = [
-        item for item in items
-        if _is_relevant(item)
+    app_password = _get_required_env(
+        "GMAIL_APP_PASSWORD"
+    )
+
+    to_address = _get_required_env(
+        "EMAIL_TO"
+    )
+
+    app_password = "".join(
+        app_password.split()
+    )
+
+    included = [
+        item
+        for item in items
+        if _is_included(item)
     ]
 
     subject = (
-        f"🎓 Scholarship Hunter — "
-        f"{len(relevant)} fully funded Master's match"
-        f"{'' if len(relevant) == 1 else 'es'}"
+        "🎓 Scholarship Hunter — "
+        f"{len(included)} strict match"
+        f"{'es' if len(included) != 1 else ''}"
     )
 
     message = EmailMessage()
+
     message["From"] = gmail_address
     message["To"] = to_address
     message["Subject"] = subject
@@ -276,38 +364,51 @@ async def send_scholarship_email(
     html = build_email_html(items)
 
     message.set_content(
-        "Your strict scholarship results are available in the HTML version "
-        "of this email."
+        "Your strict scholarship results are "
+        "available in the HTML version of this email."
     )
-    message.add_alternative(html, subtype="html")
+
+    message.add_alternative(
+        html,
+        subtype="html",
+    )
 
     context = ssl.create_default_context()
 
     try:
+
         with smtplib.SMTP_SSL(
             "smtp.gmail.com",
             465,
             context=context,
             timeout=30,
         ) as server:
+
             server.login(
                 gmail_address,
                 app_password,
             )
-            server.send_message(message)
+
+            server.send_message(
+                message
+            )
 
         print(
-            f"Scholarship email sent successfully to {to_address}. "
-            f"Strict fully funded matches: {len(relevant)}"
+            "Scholarship email sent successfully "
+            f"to {to_address}. "
+            f"Strict matches: {len(included)}"
         )
 
     except smtplib.SMTPAuthenticationError as error:
+
         raise RuntimeError(
-            "Gmail authentication failed. Check GMAIL_ADDRESS "
-            "and GMAIL_APP_PASSWORD."
+            "Gmail authentication failed. "
+            "Check GMAIL_ADDRESS and "
+            "GMAIL_APP_PASSWORD."
         ) from error
 
     except smtplib.SMTPException as error:
+
         raise RuntimeError(
             f"Gmail SMTP error: {error}"
         ) from error
