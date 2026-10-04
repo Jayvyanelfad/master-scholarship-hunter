@@ -7,13 +7,14 @@ import asyncio
 from apify import Actor, Event
 from crawlee.crawlers import BeautifulSoupCrawler
 
-from .pipeline import rejection_breakdown
+from .pipeline import plan_run, rejection_breakdown
 from .routes import router
 from .routes import configure_routing
 from .routes import drain_final_records
 from .routes import get_source_health
 from .routes import reset_deduplication
-from .sources import configured_sources, status_table
+from .source_adapters import build_adapters
+from .sources import status_table
 
 DEFAULT_START_URL = (
     "https://www.wemakescholars.com/"
@@ -50,57 +51,57 @@ async def main() -> None:
         )
         max_requests = actor_input.get("max_requests_per_crawl", 100)
 
-        # Production default: every enabled source adapter. An explicit
-        # "sources" list (or ["all"]) overrides the default; unknown ids are
-        # ignored with a log line instead of crashing the run.
-        active_ids = configure_routing(
-            source_ids=raw_sources if isinstance(raw_sources, list) else None,
-            max_per_source=max_per_source,
-            verify_official=bool(verify_official),
-        )
-        selected = configured_sources(raw_sources if isinstance(raw_sources, list) else None)
-        selected_ids = {source.identifier for source in selected}
-        unknown = (
-            {item.strip().lower() for item in raw_sources if isinstance(item, str) and item.strip()}
-            if isinstance(raw_sources, list) else set()
-        ) - selected_ids - {"all"}
-        for name in sorted(unknown):
-            Actor.log.warning(f"Ignoring unknown source id: {name}")
-
-        start_urls: list[str] = []
-        for source in selected:
-            if source.identifier in set(active_ids):
-                start_urls.extend(source.base_urls)
-
+        user_start_urls: list[str] = []
         for item in raw_start_urls:
             if isinstance(item, str):
                 if item.strip():
-                    start_urls.append(item.strip())
+                    user_start_urls.append(item.strip())
 
             elif isinstance(item, dict):
                 url = item.get("url")
 
                 if isinstance(url, str) and url.strip():
-                    start_urls.append(url.strip())
+                    user_start_urls.append(url.strip())
 
         # Remove duplicates while preserving order.
-        start_urls = list(dict.fromkeys(start_urls))
+        user_start_urls = list(dict.fromkeys(user_start_urls))
 
-        if not start_urls:
-            Actor.log.error("No start URLs supplied.")
-            return
-
-        Actor.log.info(
-            f"Starting Master Scholarship Hunter with "
-            f"{len(start_urls)} start URL(s) across {len(active_ids)} source(s): "
-            f"{', '.join(active_ids) or 'none'}."
+        # The source registry is authoritative: by default every enabled
+        # adapter is scheduled. User Start URLs are additional legacy inputs;
+        # they never suppress registry-driven discovery.
+        plan = plan_run(
+            sources_input=raw_sources if isinstance(raw_sources, list) else None,
+            user_start_urls=user_start_urls,
+            adapters=build_adapters(),
         )
-        for entry in status_table():
+        configure_routing(
+            source_ids=plan.active_ids,
+            max_per_source=max_per_source,
+            verify_official=bool(verify_official),
+        )
+
+        Actor.log.info(f"Configured start URLs: {len(user_start_urls)}")
+        Actor.log.info(f"Enabled source adapters: {len(plan.active_ids)}")
+        Actor.log.info("Discovery sources:")
+        for source_id in plan.active_ids:
+            Actor.log.info(f"- {source_id}")
+        Actor.log.info(f"Discovery requests scheduled: {plan.scheduled_total}")
+        for warning in plan.warnings:
+            Actor.log.warning(warning)
+        for source_id in plan.active_ids:
             Actor.log.info(
-                f"Source {entry['source_id']}: {entry['status']} "
-                f"(discovery {entry['discovery']}, verification {entry['verification']}). "
-                f"{entry['reason']}"
+                f"[Source: {source_id}] Starting discovery "
+                f"({len(plan.per_source_urls[source_id])} page(s))."
             )
+        for entry in status_table():
+            if entry["source_id"] not in set(plan.active_ids):
+                Actor.log.info(
+                    f"[Source: {entry['source_id']}] skipped ({entry['status']}). {entry['reason']}"
+                )
+
+        if not plan.start_urls:
+            Actor.log.error("No discovery URLs scheduled and no start URLs supplied.")
+            return
 
         reset_deduplication()
         crawler = BeautifulSoupCrawler(
@@ -109,7 +110,7 @@ async def main() -> None:
         )
 
         try:
-            await crawler.run(start_urls)
+            await crawler.run(plan.start_urls)
         except Exception as error:
             Actor.log.error(f"Crawler run failed: {error}")
 
@@ -143,14 +144,24 @@ async def main() -> None:
             **{f"reason_{key}": value for key, value in reasons.items()},
         }
         Actor.log.info("Run diagnostics: " + ", ".join(f"{key}={value}" for key, value in diagnostics.items()))
-        for source_id, entry in health.items():
+        Actor.log.info("Source health summary:")
+        for source_id in plan.active_ids:
+            entry = health.get(source_id, {})
             Actor.log.info(
-                f"Source {source_id}: attempted={entry.get('attempted')} "
-                f"discovered={entry.get('discovered')} official_queued={entry.get('official_queued')} "
-                f"official_fetched={entry.get('official_fetched')} verified={entry.get('verified')} "
-                f"possible={entry.get('possible')} rejected={entry.get('rejected')} "
-                f"errors={entry.get('errors')} {entry.get('note', '')}"
+                f"{source_id}: discovered={entry.get('discovered', 0)} "
+                f"verified={entry.get('verified', 0)} "
+                f"strong_matches={entry.get('verified', 0)} "
+                f"possible={entry.get('possible', 0)} rejected={entry.get('rejected', 0)} "
+                f"errors={entry.get('errors', 0)} {entry.get('note', '')}".rstrip()
             )
+            if not entry:
+                Actor.log.info(f"[Source: {source_id}] discovered 0 candidates.")
+        for source_id, entry in health.items():
+            if source_id not in set(plan.active_ids):
+                Actor.log.info(
+                    f"{source_id}: discovered={entry.get('discovered', 0)} "
+                    f"errors={entry.get('errors', 0)} {entry.get('note', '')}".rstrip()
+                )
 
         # Send the daily email digest.
         from .emailer import send_scholarship_email

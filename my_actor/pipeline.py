@@ -9,6 +9,11 @@ the live crawl.
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from .source_adapters.base import SourceAdapter
 
 
 @dataclass
@@ -107,6 +112,137 @@ class RecordStore:
 
     def __len__(self) -> int:
         return len(self._records)
+
+
+def _is_http_url(url: str) -> bool:
+    try:
+        parsed = urlparse((url or "").strip())
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
+
+def validate_discovery_config(adapter: "SourceAdapter") -> list[str]:
+    """Return configuration errors for one adapter (empty when healthy).
+
+    An enabled adapter MUST expose at least one valid discovery URL,
+    otherwise production would silently skip the source.
+    """
+    errors: list[str] = []
+    if not adapter.enabled:
+        return errors
+    if not adapter.discovery_urls:
+        errors.append(f"[{adapter.source_id}] enabled but exposes no discovery_urls.")
+        return errors
+    for url in adapter.discovery_urls:
+        if not _is_http_url(url):
+            errors.append(f"[{adapter.source_id}] invalid discovery URL: {url!r}.")
+    return errors
+
+
+def find_adapter_for_url(
+    adapters: list["SourceAdapter"], url: str, *, strict_domain: bool = True
+) -> "SourceAdapter | None":
+    """Route a fetched URL to its adapter without guessing.
+
+    Strict pass: only adapters whose official domains (or explicit discovery
+    URLs) cover the URL host may claim it. This prevents permissive matchers
+    (for example Erasmus consortium programme hints) from stealing another
+    source's record pages. Permissive pass (``strict_domain=False``) is the
+    fallback for consortium programme pages on arbitrary university domains.
+    A misbehaving adapter never blocks the remaining ones.
+    """
+    from .source_adapters.base import host_in_domains
+
+    normalized = (url or "").strip().lower().rstrip("/")
+    for adapter in adapters:
+        try:
+            if strict_domain:
+                in_scope = host_in_domains(url, adapter.official_domains) or any(
+                    normalized == item.strip().lower().rstrip("/") for item in adapter.discovery_urls
+                )
+                if not in_scope:
+                    continue
+            if adapter.is_listing_url(url) or adapter.is_detail_url(url):
+                return adapter
+        except Exception:
+            continue
+    return None
+
+
+@dataclass
+class DiscoveryPlan:
+    """Pure scheduling outcome: which sources run and which URLs are fetched."""
+
+    active_ids: list[str]
+    per_source_urls: dict[str, list[str]]
+    start_urls: list[str]
+    warnings: list[str]
+
+    @property
+    def scheduled_total(self) -> int:
+        return len(self.start_urls)
+
+
+def plan_run(
+    *,
+    sources_input: list[str] | None,
+    user_start_urls: list[str],
+    adapters: list["SourceAdapter"],
+) -> DiscoveryPlan:
+    """Decide the run's discovery schedule from registry + input.
+
+    - No ``sources`` input (or empty) → every enabled adapter is scheduled.
+    - ``["all"]`` → every enabled adapter is scheduled.
+    - Explicit ids → exactly those adapters, when they exist and are enabled.
+    - Disabled or unknown ids produce warnings, never crashes.
+    - Enabled adapters without a valid discovery URL are reported and skipped
+      for this run instead of silently doing nothing.
+    - User Start URLs are always preserved as additional discovery inputs.
+    """
+    by_id = {adapter.source_id: adapter for adapter in adapters}
+    warnings: list[str] = []
+    if not sources_input:
+        wanted: set[str] = {adapter.source_id for adapter in adapters if adapter.enabled}
+    else:
+        selected = {item.strip().lower() for item in sources_input if item.strip()}
+        if "all" in selected:
+            wanted = {adapter.source_id for adapter in adapters if adapter.enabled}
+        else:
+            wanted = set(selected)
+            for name in sorted(selected - set(by_id)):
+                if name != "all":
+                    warnings.append(f"Ignoring unknown source id: {name}.")
+    active_ids: list[str] = []
+    per_source_urls: dict[str, list[str]] = {}
+    for adapter in adapters:
+        if adapter.source_id not in wanted:
+            continue
+        if not adapter.enabled:
+            warnings.append(
+                f"Source '{adapter.source_id}' is disabled ({adapter.status_reason}); skipping."
+            )
+            continue
+        errors = validate_discovery_config(adapter)
+        if errors:
+            warnings.extend(errors)
+            continue
+        urls = [url.strip() for url in adapter.discovery_urls if _is_http_url(url)]
+        if not urls:
+            warnings.append(f"Source '{adapter.source_id}' has no usable discovery URL; skipping.")
+            continue
+        active_ids.append(adapter.source_id)
+        per_source_urls[adapter.source_id] = urls
+    start_urls = list(dict.fromkeys(
+        [url for source_id in active_ids for url in per_source_urls[source_id]]
+        + [url for url in user_start_urls if url.strip()]
+    ))
+    return DiscoveryPlan(
+        active_ids=active_ids,
+        per_source_urls=per_source_urls,
+        start_urls=start_urls,
+        warnings=warnings,
+    )
 
 
 def rejection_breakdown(items: list[dict[str, object]]) -> dict[str, int]:

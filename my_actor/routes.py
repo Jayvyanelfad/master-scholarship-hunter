@@ -11,7 +11,7 @@ from apify import Actor
 from crawlee.crawlers import BeautifulSoupCrawlingContext
 from crawlee.router import Router
 
-from .pipeline import HealthTracker, RecordStore, assemble_record
+from .pipeline import HealthTracker, RecordStore, assemble_record, find_adapter_for_url
 from .profile_rules import STUDENT_PROFILE, analyze_degree, analyze_destination, evaluate_scholarship
 from .source_adapters import build_adapters
 from .source_adapters.base import SourceAdapter, dedup_key
@@ -38,6 +38,11 @@ _health = HealthTracker()
 _store = RecordStore()
 _stored_per_source: dict[str, int] = {}
 _pending_by_official_url: dict[str, list["PendingDiscovery"]] = {}
+# Strings-only enqueueing cannot carry request metadata, so the source that
+# scheduled a detail URL is remembered here (canonical URL -> source_id).
+# This routes each response to the exact adapter that discovered it instead
+# of re-guessing from URL patterns on every fetch.
+_enqueued_source: dict[str, str] = {}
 
 
 def configure_routing(*, source_ids: list[str] | None = None, max_per_source: int = 50, verify_official: bool = True) -> list[str]:
@@ -60,6 +65,7 @@ def configure_routing(*, source_ids: list[str] | None = None, max_per_source: in
 
 def reset_deduplication() -> None:
     _pending_by_official_url.clear()
+    _enqueued_source.clear()
     _store.clear()
     _stored_per_source.clear()
     _health.clear()
@@ -96,18 +102,26 @@ def page_text(context: BeautifulSoupCrawlingContext) -> str:
 
 
 def _adapter_for_url(url: str) -> SourceAdapter | None:
-    for adapter in _ACTIVE_ADAPTERS:
-        try:
-            if adapter.is_listing_url(url) or adapter.is_detail_url(url):
+    """Route a URL to its adapter: scheduled-source first, then URL mapping.
+
+    The scheduled-source map is exact (no guessing). The strict domain pass
+    keeps permissive matchers from claiming other sources' pages. The
+    permissive pass covers consortium programme pages on arbitrary domains.
+    """
+    scheduled = _enqueued_source.get(canonical_url(url))
+    if scheduled:
+        for adapter in _ACTIVE_ADAPTERS:
+            if adapter.source_id == scheduled:
                 return adapter
-        except Exception:
-            continue
+    strict = find_adapter_for_url(_ACTIVE_ADAPTERS, url, strict_domain=True)
+    if strict is not None:
+        return strict
     registered = source_by_url(url)
     if registered:
         for adapter in _ACTIVE_ADAPTERS:
             if adapter.source_id == registered.identifier:
                 return adapter
-    return None
+    return find_adapter_for_url(_ACTIVE_ADAPTERS, url, strict_domain=False)
 
 
 def _source_metadata(url: str) -> tuple[str, str]:
@@ -312,12 +326,15 @@ async def adapter_listing_handler(context: BeautifulSoupCrawlingContext) -> None
             break
         try:
             await context.add_requests([candidate.url])
+            _enqueued_source[canonical_url(candidate.url)] = adapter.source_id
             queued += 1
         except Exception as error:
             _health.fail(adapter.source_id, adapter.display_name, f"Enqueue failed: {error}")
             break
     health.discovered += queued
-    Actor.log.info(f"Source {adapter.source_id}: {queued} detail URL(s) queued from listing.")
+    Actor.log.info(f"[Source: {adapter.source_id}] discovered {queued} candidate(s) from listing.")
+    if not queued:
+        Actor.log.info(f"[Source: {adapter.source_id}] discovered 0 candidates.")
 
 
 @router.handler("ADAPTER_DETAIL")
@@ -377,7 +394,7 @@ async def adapter_detail_handler(context: BeautifulSoupCrawlingContext) -> None:
             )
             health.official_queued += 1
             await context.add_requests([link])
-    Actor.log.info(f"Source {adapter.source_id} detail processed: {detail.title[:80]}")
+    Actor.log.info(f"[Source: {adapter.source_id}] detail processed: {detail.title[:80]}")
 
 
 def _unverified_warning_note(discovery_url: str, warning: str) -> None:
