@@ -28,10 +28,12 @@ from .base import (
     SourceAdapter,
     absolutize,
     blank_fields,
+    extract_evidence_sentences,
     extract_links,
     extract_text,
     extract_title,
     host_in_domains,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
@@ -107,8 +109,20 @@ class MastercardAdapter(SourceAdapter):
         return any(hint in anchor_lower for hint in PARTNER_ANCHOR_HINTS)
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(text)
+        if not fields["funding"]:
+            fields["funding"] = extract_evidence_sentences(text, (
+                "tuition fees", "accommodation", "stipend", "financial support",
+                "air ticket", "books",
+            ))
+        if not fields["nationality"]:
+            fields["nationality"] = extract_evidence_sentences(text, (
+                "african", "young people", "eligible", "apply through",
+            ))
         follow: list[str] = []
         if host_in_domains(url, FOUNDATION_DOMAINS):
             for href, anchor in extract_links(html):

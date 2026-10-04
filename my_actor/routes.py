@@ -37,6 +37,7 @@ _VERIFY_OFFICIAL = True
 _health = HealthTracker()
 _store = RecordStore()
 _stored_per_source: dict[str, int] = {}
+_requests_seen = 0
 _pending_by_official_url: dict[str, list["PendingDiscovery"]] = {}
 # Strings-only enqueueing cannot carry request metadata, so the source that
 # scheduled a detail URL is remembered here (canonical URL -> source_id).
@@ -64,6 +65,8 @@ def configure_routing(*, source_ids: list[str] | None = None, max_per_source: in
 
 
 def reset_deduplication() -> None:
+    global _requests_seen
+    _requests_seen = 0
     _pending_by_official_url.clear()
     _enqueued_source.clear()
     _store.clear()
@@ -73,6 +76,11 @@ def reset_deduplication() -> None:
 
 def get_source_health() -> dict[str, dict[str, object]]:
     return _health.as_dicts()
+
+
+def get_requests_seen() -> int:
+    """Number of pages actually processed by the request handlers."""
+    return _requests_seen
 
 
 def _now() -> str:
@@ -218,8 +226,10 @@ def _store_evaluated(
     if outcome in {"inserted", "upgraded"}:
         _stored_per_source[source_id] = _stored_per_source.get(source_id, 0) + 1
     status = str(result.get("match_status", ""))
-    if status == "strong_match":
+    if verification_status == "verified":
         health.verified += 1
+    if status == "strong_match":
+        health.strong_matches += 1
     elif status == "rejected":
         health.rejected += 1
     else:
@@ -350,6 +360,10 @@ async def adapter_detail_handler(context: BeautifulSoupCrawlingContext) -> None:
         _health.fail(adapter.source_id, adapter.display_name, f"Detail parse failed: {error}")
         Actor.log.warning(f"Source {adapter.source_id} detail failed for {url}: {error}")
         return
+    if detail.skip:
+        health.note = f"Skipped non-record page: {detail.skip_reason or url[:80]}"
+        Actor.log.info(f"[Source: {adapter.source_id}] skipped non-record page: {url[:100]}")
+        return
     candidate = PendingDiscovery(
         _discovery_id(url, detail.title, detail.fields.get("provider", "")),
         detail.title, url, detail.fields, "",
@@ -421,6 +435,8 @@ async def start_handler(context: BeautifulSoupCrawlingContext) -> None:
 @router.default_handler
 async def default_handler(context: BeautifulSoupCrawlingContext) -> None:
     url = str(context.request.url)
+    global _requests_seen
+    _requests_seen += 1
     try:
         if canonical_url(url) in _pending_by_official_url:
             await official_handler(context)

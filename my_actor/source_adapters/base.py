@@ -138,6 +138,69 @@ def hostname(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
 
+def canonical_programme_url(url: str) -> str:
+    """Identity URL with language variants collapsed (delegates to verification)."""
+    from ..verification import canonical_url
+
+    return canonical_url(url)
+
+
+# Page shapes that are never scholarship records, whatever the source.
+JUNK_TITLE_PATTERNS = (
+    "cookie consent", "cookie settings", "cookie policy", "cookies policy",
+    "page not found", "404", "access denied", "forbidden", "error 403",
+    "select your language", "choose your language", "select language",
+    "service unavailable", "under maintenance", "just a moment",
+)
+JUNK_PATH_PATTERNS = (
+    "cookie", "cookies", "/faq", "faq-", "accessibility", "barrierefreiheit",
+    "imprint", "impressum", "datenschutz", "privacy", "/news", "/presse",
+    "/press", "/events", "/contact", "/sitemap", "/search", "language-selector",
+)
+
+
+def is_junk_page(html: str, url: str) -> str:
+    """Return a reason when a fetched page is not a content page, else "".
+
+    Conservative by design: a page is junk only on an explicit signal
+    (junk title, or a junk path with almost no readable text). Real
+    scholarship pages are never skipped by this check.
+    """
+    title = extract_title(html).lower()
+    for pattern in JUNK_TITLE_PATTERNS:
+        if pattern and pattern in title:
+            return f"Non-record page (title indicates '{pattern}')."
+    lowered_url = (url or "").lower()
+    if any(pattern in lowered_url for pattern in JUNK_PATH_PATTERNS):
+        if len(extract_text(html)) < 1500:
+            return "Non-record navigation/utility page."
+    return ""
+
+
+def extract_evidence_sentences(text: str, keywords: tuple[str, ...], max_chars: int = 600) -> str:
+    """Join source sentences containing any keyword (fallback evidence).
+
+    Used only when no labelled field was extracted, so programme prose
+    ("covers tuition fees and a monthly stipend") still becomes evidence
+    instead of an empty field. Never invents content: sentences come
+    verbatim from the fetched page.
+    """
+    lowered_keywords = [keyword.lower() for keyword in keywords]
+    picked: list[str] = []
+    total = 0
+    for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
+        cleaned = re.sub(r"\s+", " ", sentence).strip()
+        if len(cleaned) < 20 or len(cleaned) > 400:
+            continue
+        lowered = cleaned.lower()
+        if any(keyword in lowered for keyword in lowered_keywords):
+            picked.append(cleaned)
+            total += len(cleaned)
+            if total >= max_chars:
+                break
+    return " ".join(picked)
+
+
 def host_in_domains(url: str, domains: tuple[str, ...]) -> bool:
     host = hostname(url)
     wanted = {domain.lower().lstrip(".") for domain in domains}
@@ -168,6 +231,8 @@ class DetailResult:
     ``follow_links`` holds deeper official pages (partner-university model).
     ``is_hop`` marks index/catalogue pages that only resolve deeper official
     pages: routes enqueue the follow-ups without storing a stub record.
+    ``skip`` marks non-record pages (language selectors, cookie walls,
+    navigation shells): routes store nothing for them at all.
     """
 
     title: str
@@ -177,6 +242,8 @@ class DetailResult:
     follow_links: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     is_hop: bool = False
+    skip: bool = False
+    skip_reason: str = ""
 
 
 @dataclass(frozen=True)

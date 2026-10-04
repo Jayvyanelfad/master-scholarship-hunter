@@ -25,9 +25,11 @@ from .base import (
     ListingResult,
     SourceAdapter,
     blank_fields,
+    extract_evidence_sentences,
     extract_text,
     extract_title,
     host_in_domains,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
@@ -91,7 +93,21 @@ class MextAdapter(SourceAdapter):
         return ListingResult(candidates=tuple(found))
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
-        fields = extract_structured_fields(extract_text(html))
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
+        text = extract_text(html)
+        fields = extract_structured_fields(text)
         if not fields["destination"]:
             fields["destination"] = self.destination
+        if not fields["funding"]:
+            fields["funding"] = extract_evidence_sentences(text, (
+                "per month", "stipend", "tuition", "exempted", "airfare",
+                "travel expenses", "scholarship",
+            ))
+        if not fields["nationality"]:
+            fields["nationality"] = extract_evidence_sentences(text, (
+                "embassy recommendation", "university recommendation",
+                "eligible countries", "who can apply", "applicants from",
+            ))
         return DetailResult(title=extract_title(html), fields=fields or blank_fields())

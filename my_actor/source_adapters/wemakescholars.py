@@ -21,6 +21,7 @@ from .base import (
     extract_links,
     extract_text,
     extract_title,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
@@ -85,5 +86,8 @@ class WeMakeScholarsAdapter(SourceAdapter):
         return ListingResult(candidates=tuple(found))
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         fields = extract_structured_fields(extract_text(html))
         return DetailResult(title=extract_title(html), fields=fields or blank_fields())

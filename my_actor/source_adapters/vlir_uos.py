@@ -32,10 +32,13 @@ from .base import (
     SourceAdapter,
     absolutize,
     blank_fields,
+    canonical_programme_url,
+    extract_evidence_sentences,
     extract_links,
     extract_text,
     extract_title,
     host_in_domains,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
@@ -45,8 +48,28 @@ DISCOVERY_URLS = (
     "https://www.vliruos.be/",
 )
 
-PROGRAMME_HINTS = ("master", "bachelor", "programme", "program", "study", "scholarship", "icp")
-COUNTRY_LIST_HINTS = ("eligible countr", "participating countr", "country list", "scholarship countr")
+# Only ICP Connect Master's programme pages are candidates.
+MASTER_PATH_HINTS = ("master", "icp-connect", "icp_connect", "study-programme", "study-programmes")
+# Never candidates: bachelor's, jobs, project funding, short initiatives.
+EXCLUDED_PATH_HINTS = (
+    "bachelor", "hotel-management", "jobs", "job-", "vacancy", "vacancies",
+    "career", "project-funding", "short-initiative", "staff", "alumni-network",
+    "programme-manager", "programme manager",
+)
+EXCLUDED_ANCHOR_HINTS = (
+    "bachelor", "programme manager", "project funding", "short initiative",
+    "call for project", "job", "vacancy",
+)
+
+FUNDING_PROSE_KEYWORDS = (
+    "tuition fees", "tuition", "living expenses", "board and lodging",
+    "stipend", "allowance", "travel", "insurance", "costs are covered",
+    "scholarship costs",
+)
+NATIONALITY_PROSE_KEYWORDS = (
+    "eligible countries", "nationality", "applicants from", "candidates",
+    "scholarship countries", "africa", "asia", "latin america",
+)
 ELIGIBLE_LIST_LABELS = ("Eligible countries", "Eligible country", "Eligible nationalities", "Scholarship countries")
 
 
@@ -81,9 +104,11 @@ class VlirUosAdapter(SourceAdapter):
         if not host_in_domains(url, VLIR_DOMAINS):
             return False
         lowered = url.lower()
-        return any(hint in lowered for hint in PROGRAMME_HINTS) and lowered.rstrip("/") not in {
-            item.lower().rstrip("/") for item in DISCOVERY_URLS
-        }
+        if lowered.rstrip("/") in {item.lower().rstrip("/") for item in DISCOVERY_URLS}:
+            return False
+        if any(hint in lowered for hint in EXCLUDED_PATH_HINTS):
+            return False
+        return any(hint in lowered for hint in MASTER_PATH_HINTS)
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
         found: list[DiscoveryCandidate] = []
@@ -92,10 +117,12 @@ class VlirUosAdapter(SourceAdapter):
             absolute = absolutize(base_url, href)
             if not self.is_detail_url(absolute):
                 continue
-            canonical = absolute.lower().rstrip("/")
-            if canonical in seen:
+            if any(hint in anchor.lower() for hint in EXCLUDED_ANCHOR_HINTS):
                 continue
-            seen.add(canonical)
+            identity = canonical_programme_url(absolute)
+            if identity in seen:
+                continue
+            seen.add(identity)
             found.append(DiscoveryCandidate(url=absolute, title=anchor, context=anchor))
             if len(found) >= self.max_records:
                 break
@@ -114,10 +141,17 @@ class VlirUosAdapter(SourceAdapter):
         return ""
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(text)
         if not fields["destination"]:
             fields["destination"] = self.destination
+        if not fields["funding"]:
+            fields["funding"] = extract_evidence_sentences(text, FUNDING_PROSE_KEYWORDS)
+        if not fields["nationality"]:
+            fields["nationality"] = extract_evidence_sentences(text, NATIONALITY_PROSE_KEYWORDS)
         residence = self.extract_residence_list(text)
         # A residence-rule sentence without an extractable country list keeps
         # residence unknown (never eligible): the matcher must see the list.

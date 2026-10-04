@@ -36,10 +36,10 @@
     "max_requests_per_crawl": {
       "title": "Maximum pages per run",
       "type": "integer",
-      "description": "Safety limit for discovery and verification pages.",
-      "default": 100,
+      "description": "Safety limit for discovery and verification pages. Must cover all discovery plus official verification requests (about 200 for the default 15-source run); the run logs whether the limit truncated the research set.",
+      "default": 300,
       "minimum": 1,
-      "maximum": 500
+      "maximum": 1000
     }
   }
 }

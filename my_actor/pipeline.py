@@ -18,7 +18,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class SourceHealth:
-    """Per-source counters for one run (see task: source-level logging)."""
+    """Per-source counters for one run (see task: source-level logging).
+
+    ``verified`` counts records whose official evidence was merged
+    (evidence-level verification). ``strong_matches`` counts records that
+    additionally passed every strict eligibility gate.
+    """
 
     source_id: str
     display_name: str = ""
@@ -27,6 +32,7 @@ class SourceHealth:
     official_queued: int = 0
     official_fetched: int = 0
     verified: int = 0
+    strong_matches: int = 0
     possible: int = 0
     rejected: int = 0
     errors: int = 0
@@ -41,6 +47,7 @@ class SourceHealth:
             "official_queued": self.official_queued,
             "official_fetched": self.official_fetched,
             "verified": self.verified,
+            "strong_matches": self.strong_matches,
             "possible": self.possible,
             "rejected": self.rejected,
             "errors": self.errors,
@@ -243,6 +250,22 @@ def plan_run(
         start_urls=start_urls,
         warnings=warnings,
     )
+
+
+def limit_diagnostic(scheduled: int, completed: int, limit: int) -> dict[str, object]:
+    """Describe whether the crawler request limit truncated the run.
+
+    ``completed`` counts pages actually processed; when it reaches ``limit``
+    while requests remain unscheduled/unprocessed, the research set was cut
+    short and the run must say so instead of silently reporting partial data.
+    """
+    reached = completed >= limit and scheduled > completed
+    return {
+        "request_limit": limit,
+        "requests_scheduled": scheduled,
+        "requests_completed": completed,
+        "request_limit_reached": reached,
+    }
 
 
 def rejection_breakdown(items: list[dict[str, object]]) -> dict[str, int]:

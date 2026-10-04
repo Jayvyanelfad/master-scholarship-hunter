@@ -26,16 +26,23 @@ from .base import (
     SourceAdapter,
     absolutize,
     blank_fields,
+    extract_evidence_sentences,
     extract_links,
     extract_text,
     extract_title,
     host_in_domains,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
 LISTING_PATH_HINTS = ("scholarship", "scholarships", "funding", "funding-your-studies", "finance", "grant", "grants", "award", "awards", "opportunit", "programme", "program", "study", "master")
 LISTING_ANCHOR_HINTS = ("scholarship", "funding", "grant", "apply", "master", "programme", "award", "finance", "bursary")
 DETAIL_PATH_HINTS = ("scholarship", "funding", "grant", "award", "programme", "program", "master", "finance", "excellence", "global-professional", "australia-award")
+# Utility/navigation paths that are never scholarship records.
+NON_RECORD_PATH_TOKENS = (
+    "cookie", "/faq", "accessibility", "/news", "/events", "/contact",
+    "/sitemap", "/search", "newsletter", "alumni-stories", "/stories",
+)
 
 REQUIREMENT_SENTENCE_HINTS = ("work experience", "leadership", "2800 hours", "2,800 hours")
 
@@ -100,6 +107,8 @@ class ConfiguredOfficialAdapter(SourceAdapter):
             if not host_in_domains(absolute, self.official_domains):
                 continue
             lowered = absolute.lower()
+            if any(token in lowered for token in NON_RECORD_PATH_TOKENS):
+                continue
             anchor_lower = anchor.lower()
             if any(hint in lowered for hint in LISTING_PATH_HINTS) or any(hint in anchor_lower for hint in LISTING_ANCHOR_HINTS):
                 canonical = lowered.rstrip("/")
@@ -112,10 +121,23 @@ class ConfiguredOfficialAdapter(SourceAdapter):
         return ListingResult(candidates=tuple(found))
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(text)
         if not fields["destination"] and self.destination:
             fields["destination"] = self.destination
+        if not fields["funding"]:
+            fields["funding"] = extract_evidence_sentences(text, (
+                "tuition", "fee waiver", "stipend", "living", "allowance",
+                "fully funded", "scholarship covers", "grant covers",
+            ))
+        if not fields["nationality"]:
+            fields["nationality"] = extract_evidence_sentences(text, (
+                "eligible countr", "open to", "international", "nationals",
+                "citizens of", "all countries",
+            ))
         requirement_text = " ".join(
             sentence for sentence in re.split(r"(?<=[.!?])\s+", text)
             if any(hint in sentence.lower() for hint in REQUIREMENT_SENTENCE_HINTS)

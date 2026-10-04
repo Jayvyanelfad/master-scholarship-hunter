@@ -213,10 +213,23 @@ def build_email_html(
 
     if not included:
         diagnostics = diagnostics or {}
+        summary_rows = "".join(
+            f"<li>{escape(label)}: {diagnostics.get(key, 0)}</li>"
+            for key, label in (
+                ("scholarships_discovered", "Candidates Discovered"),
+                ("official_pages_checked", "Official Pages Checked"),
+                ("possible_matches", "Possible Matches"),
+                ("strong_matches", "Strong Matches"),
+            )
+            if key in diagnostics
+        )
+        if summary_rows:
+            summary_rows = "<ul>" + summary_rows + "</ul>"
         diagnostic_rows = "".join(
             f"<li>{escape(key.replace('_', ' ').title())}: {value}</li>"
             for key, value in diagnostics.items()
             if not str(key).startswith("reason_")
+            and key not in {"scholarships_discovered", "official_pages_checked", "possible_matches", "strong_matches"}
         )
         reason_labels = {
             "reason_non_masters": "Non-Master's level",
@@ -243,9 +256,9 @@ def build_email_html(
         if source_health:
             entries = "".join(
                 f"<li>{escape(str(entry.get('display_name', source_id)))}: "
-                f"{entry.get('discovered', 0)} discovered, "
+                f"{entry.get('discovered', 0)} candidates, "
                 f"{entry.get('official_fetched', 0)} official checked, "
-                f"{entry.get('verified', 0)} verified strong, "
+                f"{entry.get('strong_matches', entry.get('verified', 0))} strong, "
                 f"{entry.get('errors', 0)} errors</li>"
                 for source_id, entry in source_health.items()
                 if isinstance(entry, dict)
@@ -287,7 +300,7 @@ def build_email_html(
 
                 <ul>""" + diagnostic_rows + """</ul>
 
-                """ + source_rows + reason_rows + """
+                """ + summary_rows + source_rows + reason_rows + """
 
             </div>
 

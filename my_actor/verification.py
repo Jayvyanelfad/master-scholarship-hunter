@@ -8,6 +8,13 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+# Query keys that only select a language variant of the same page.
+LOCALE_QUERY_KEYS = {"locale", "lang", "language", "setlang", "clang"}
+# First path segments that only select a language variant of the same page.
+LOCALE_PATH_SEGMENTS = {
+    "en", "fr", "de", "es", "nl", "it", "pt", "sv", "fi", "da", "no", "nb",
+    "ja", "zh", "ar", "sw", "eng", "fre", "ger",
+}
 SOCIAL_OR_TRACKING_DOMAINS = (
     "facebook.com", "instagram.com", "linkedin.com", "twitter.com", "x.com",
     "youtube.com", "tiktok.com", "whatsapp.com", "bit.ly", "tinyurl.com",
@@ -37,14 +44,27 @@ class LinkCandidate:
 
 
 def canonical_url(url: str) -> str:
-    """Normalize identity URLs and remove only known tracking parameters."""
+    """Normalize identity URLs: tracking and language markers removed.
+
+    Language variants (``/es/...`` vs ``/...?locale=es``) collapse to one
+    identity so localized duplicates deduplicate instead of multiplying.
+    """
     parsed = urlparse(url)
     query = [
         (key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() not in TRACKING_QUERY_KEYS and not key.lower().startswith("utm_")
+        if key.lower() not in TRACKING_QUERY_KEYS
+        and key.lower() not in LOCALE_QUERY_KEYS
+        and not key.lower().startswith("utm_")
     ]
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if segments and segments[0].lower() in LOCALE_PATH_SEGMENTS and len(segments) > 1:
+        segments = segments[1:]
+    path = ("/" + "/".join(segments)).rstrip("/") or "/"
+    # Preserve the empty-path vs root distinction used by older keys.
+    if not segments:
+        path = parsed.path.rstrip("/")
     return urlunparse((
-        parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "",
+        parsed.scheme.lower(), parsed.netloc.lower(), path, "",
         urlencode(query, doseq=True), "",
     ))
 

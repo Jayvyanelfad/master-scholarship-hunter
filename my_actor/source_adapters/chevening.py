@@ -29,10 +29,12 @@ from .base import (
     SourceAdapter,
     absolutize,
     blank_fields,
+    extract_evidence_sentences,
     extract_links,
     extract_text,
     extract_title,
     host_in_domains,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
@@ -103,10 +105,23 @@ class CheveningAdapter(SourceAdapter):
         return ", ".join(cleaned[:300])
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(text)
         if not fields["destination"]:
             fields["destination"] = self.destination
+        if not fields["funding"]:
+            fields["funding"] = extract_evidence_sentences(text, (
+                "fully-funded", "fully funded", "tuition", "stipend",
+                "living", "allowance", "airfare", "travel",
+            ))
+        if not fields["nationality"]:
+            fields["nationality"] = extract_evidence_sentences(text, (
+                "chevening-eligible country", "eligible country", "citizen of",
+                "all over the world", "international",
+            ))
         countries = self.extract_country_options(html)
         if countries and not fields["nationality"]:
             fields["nationality"] = f"Chevening-eligible countries: {countries}"

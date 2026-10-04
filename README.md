@@ -47,8 +47,11 @@ verified only after a qualified official page is fetched and analysed.
 - `max_results_per_source` (default `50`): Bounded discovery cap per source.
 - `verify_official` (default `true`): Follow official links and merge
   official evidence. Disable only for debugging discovery.
-- `max_requests_per_crawl` (default `100`): Maximum discovery/verification
-  pages processed in one run.
+- `max_requests_per_crawl` (default `300`): Maximum discovery/verification
+  pages processed in one run. Must cover all discovery plus official
+  verification requests (about 200 for the default 15-source run). The run
+  logs `Request limit`, `Requests scheduled`, and `Requests completed`, and
+  emits a `request_limit_reached` diagnostic instead of silently truncating.
 
 No credentials are supplied through Actor input. SMTP settings use
 `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, and `EMAIL_TO` environment variables.
@@ -105,8 +108,12 @@ filtering are separate: it is discovered, then rejected.
 
 Cross-source deduplication keys on the canonical official URL, so one
 scholarship found via several sources yields one record with merged
-provenance. Every run logs per-source health (attempted, discovered,
-official queued/fetched, verified, possible, rejected, errors).
+provenance. Language variants of one programme page share one canonical
+identity. Every run logs per-source health (`discovered`,
+`official_pages_checked`, `evidence_verified`, `possible_matches`,
+`strong_matches`, `rejected`, `errors`); non-record pages (language
+selectors, cookie walls, navigation shells) are skipped without creating
+records.
 
 The normal pipeline is discovery, normalization, deduplication, structured
 extraction, official-link verification, evidence analysis, and final gating.

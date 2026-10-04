@@ -7,10 +7,11 @@ import asyncio
 from apify import Actor, Event
 from crawlee.crawlers import BeautifulSoupCrawler
 
-from .pipeline import plan_run, rejection_breakdown
+from .pipeline import limit_diagnostic, plan_run, rejection_breakdown
 from .routes import router
 from .routes import configure_routing
 from .routes import drain_final_records
+from .routes import get_requests_seen
 from .routes import get_source_health
 from .routes import reset_deduplication
 from .source_adapters import build_adapters
@@ -49,7 +50,11 @@ async def main() -> None:
             "start_urls",
             [{"url": DEFAULT_START_URL}],
         )
-        max_requests = actor_input.get("max_requests_per_crawl", 100)
+        max_requests = actor_input.get("max_requests_per_crawl", 300)
+        try:
+            request_limit = max(1, int(max_requests))
+        except (TypeError, ValueError):
+            request_limit = 300
 
         user_start_urls: list[str] = []
         for item in raw_start_urls:
@@ -104,8 +109,10 @@ async def main() -> None:
             return
 
         reset_deduplication()
+        Actor.log.info(f"Request limit: {request_limit}")
+        Actor.log.info(f"Requests scheduled: {plan.scheduled_total}")
         crawler = BeautifulSoupCrawler(
-            max_requests_per_crawl=max(1, int(max_requests)) if isinstance(max_requests, int) else 100,
+            max_requests_per_crawl=request_limit,
             request_handler=router,
         )
 
@@ -113,6 +120,16 @@ async def main() -> None:
             await crawler.run(plan.start_urls)
         except Exception as error:
             Actor.log.error(f"Crawler run failed: {error}")
+
+        requests_completed = get_requests_seen()
+        Actor.log.info(f"Requests completed: {requests_completed}")
+        crawling = limit_diagnostic(plan.scheduled_total, requests_completed, request_limit)
+        if crawling["request_limit_reached"]:
+            Actor.log.warning(
+                f"Request limit reached ({request_limit}): the research set may be "
+                f"truncated. Raise max_requests_per_crawl to cover all discovery "
+                f"and verification requests."
+            )
 
         # Routes hold discovery records until official evidence is merged, so
         # each dataset item is one final scholarship record.
@@ -141,21 +158,28 @@ async def main() -> None:
             "strong_matches": sum(item.get("match_status") == "strong_match" for item in scholarship_items),
             "official_pages_checked": sum(entry.get("official_fetched", 0) for entry in health.values()),
             "source_errors": sum(entry.get("errors", 0) for entry in health.values()),
+            "request_limit": crawling["request_limit"],
+            "requests_scheduled": crawling["requests_scheduled"],
+            "requests_completed": crawling["requests_completed"],
+            "request_limit_reached": crawling["request_limit_reached"],
             **{f"reason_{key}": value for key, value in reasons.items()},
         }
         Actor.log.info("Run diagnostics: " + ", ".join(f"{key}={value}" for key, value in diagnostics.items()))
         Actor.log.info("Source health summary:")
         for source_id in plan.active_ids:
             entry = health.get(source_id, {})
+            discovered = entry.get("discovered", 0)
             Actor.log.info(
-                f"{source_id}: discovered={entry.get('discovered', 0)} "
-                f"verified={entry.get('verified', 0)} "
-                f"strong_matches={entry.get('verified', 0)} "
-                f"possible={entry.get('possible', 0)} rejected={entry.get('rejected', 0)} "
+                f"{source_id}: discovered={discovered} "
+                f"official_pages_checked={entry.get('official_fetched', 0)} "
+                f"evidence_verified={entry.get('verified', 0)} "
+                f"possible_matches={entry.get('possible', 0)} "
+                f"strong_matches={entry.get('strong_matches', 0)} "
+                f"rejected={entry.get('rejected', 0)} "
                 f"errors={entry.get('errors', 0)} {entry.get('note', '')}".rstrip()
             )
-            if not entry:
-                Actor.log.info(f"[Source: {source_id}] discovered 0 candidates.")
+            if not entry or not discovered:
+                Actor.log.info(f"[Source: {source_id}] discovered {discovered} candidates.")
         for source_id, entry in health.items():
             if source_id not in set(plan.active_ids):
                 Actor.log.info(

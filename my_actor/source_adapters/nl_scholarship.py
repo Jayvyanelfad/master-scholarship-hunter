@@ -19,6 +19,7 @@ from .base import (
     extract_text,
     extract_title,
     host_in_domains,
+    is_junk_page,
 )
 from ..verification import extract_structured_fields
 
@@ -57,6 +58,9 @@ class NlScholarshipAdapter(SourceAdapter):
         return ListingResult()
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
+        junk = is_junk_page(html, url)
+        if junk:
+            return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         fields = extract_structured_fields(extract_text(html))
         if not fields["destination"]:
             fields["destination"] = self.destination
