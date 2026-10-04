@@ -17,6 +17,7 @@ discovery URL is verified live (see module docstrings per source).
 from __future__ import annotations
 
 import re
+import re
 from dataclasses import dataclass
 
 from .base import (
@@ -31,13 +32,27 @@ from .base import (
     extract_text,
     extract_title,
     host_in_domains,
+    is_generic_info_page,
     is_junk_page,
 )
 from ..verification import extract_structured_fields
 
-LISTING_PATH_HINTS = ("scholarship", "scholarships", "funding", "funding-your-studies", "finance", "grant", "grants", "award", "awards", "opportunit", "programme", "program", "study", "master")
 LISTING_ANCHOR_HINTS = ("scholarship", "funding", "grant", "apply", "master", "programme", "award", "finance", "bursary")
 DETAIL_PATH_HINTS = ("scholarship", "funding", "grant", "award", "programme", "program", "master", "finance", "excellence", "global-professional", "australia-award")
+
+# A link target is only a scholarship-record candidate when its path names
+# the award itself. Programme catalogues, university lists, and portals use
+# generic words (study/master/program/finance) that must not qualify alone.
+RECORD_PATH_TOKENS = (
+    "scholarship", "scholarships", "fellowship", "fellowships", "grant",
+    "grants", "award", "awards", "bursary", "bursaries", "stipend",
+    "stipends", "excellence",
+)
+# Pagination links are discovery scaffolding, never records.
+PAGINATION_PATTERNS = (
+    re.compile(r"[?&](page|p|offset|start)=\d+", re.I),
+    re.compile(r"/page/\d+", re.I),
+)
 # Utility/navigation paths that are never scholarship records.
 NON_RECORD_PATH_TOKENS = (
     "cookie", "/faq", "accessibility", "/news", "/events", "/contact",
@@ -61,6 +76,9 @@ class AdapterConfig:
     max_records: int = 25
     max_pages: int = 3
     notes: str = ""
+    # Extra path tokens that name genuine records for this source
+    # (programme-track slugs etc.) beyond the shared award vocabulary.
+    record_path_hints: tuple[str, ...] = ()
 
 
 class ConfiguredOfficialAdapter(SourceAdapter):
@@ -83,6 +101,16 @@ class ConfiguredOfficialAdapter(SourceAdapter):
             status_reason=config.status_reason,
             notes=config.notes,
         )
+        self._config_hints = tuple(config.record_path_hints)
+
+    def _is_record_path(self, absolute: str) -> bool:
+        lowered = absolute.lower()
+        if any(token in lowered for token in RECORD_PATH_TOKENS):
+            return True
+        return any(hint in lowered for hint in self._config_hints)
+
+    def _is_pagination(self, absolute: str) -> bool:
+        return any(pattern.search(absolute) for pattern in PAGINATION_PATTERNS)
 
     def is_listing_url(self, url: str) -> bool:
         if url.rstrip("/").lower() in {item.rstrip("/").lower() for item in self.discovery_urls}:
@@ -92,14 +120,21 @@ class ConfiguredOfficialAdapter(SourceAdapter):
     def is_detail_url(self, url: str) -> bool:
         if not host_in_domains(url, self.official_domains):
             return False
-        path = url.lower()
         if url.rstrip("/").lower() in {item.rstrip("/").lower() for item in self.discovery_urls}:
             return False
-        return any(hint in path for hint in DETAIL_PATH_HINTS)
+        if self._is_pagination(url):
+            return False
+        lowered = url.lower()
+        if any(hint in lowered for hint in DETAIL_PATH_HINTS):
+            return True
+        return self._is_record_path(url)
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        from .base import canonical_programme_url, matches_nav_anchor
+
         found: list[DiscoveryCandidate] = []
         seen: set[str] = set()
+        next_page: str | None = None
         for href, anchor in extract_links(html):
             absolute = absolutize(base_url, href)
             if not absolute.lower().startswith(("http://", "https://")):
@@ -109,16 +144,25 @@ class ConfiguredOfficialAdapter(SourceAdapter):
             lowered = absolute.lower()
             if any(token in lowered for token in NON_RECORD_PATH_TOKENS):
                 continue
+            if self._is_pagination(absolute):
+                if next_page is None:
+                    next_page = absolute
+                continue
+            if matches_nav_anchor(anchor):
+                continue
             anchor_lower = anchor.lower()
-            if any(hint in lowered for hint in LISTING_PATH_HINTS) or any(hint in anchor_lower for hint in LISTING_ANCHOR_HINTS):
-                canonical = lowered.rstrip("/")
-                if canonical in seen or canonical in {item.lower().rstrip("/") for item in self.discovery_urls}:
-                    continue
-                seen.add(canonical)
-                found.append(DiscoveryCandidate(url=absolute, title=anchor, context=anchor))
-                if len(found) >= self.max_records:
-                    break
-        return ListingResult(candidates=tuple(found))
+            if len(anchor_lower.strip()) < 6:
+                continue
+            if not (self._is_record_path(absolute) or any(hint in anchor_lower for hint in LISTING_ANCHOR_HINTS)):
+                continue
+            identity = canonical_programme_url(absolute)
+            if identity in seen or identity in {item.lower().rstrip("/") for item in self.discovery_urls}:
+                continue
+            seen.add(identity)
+            found.append(DiscoveryCandidate(url=absolute, title=anchor, context=anchor))
+            if len(found) >= self.max_records:
+                break
+        return ListingResult(candidates=tuple(found), next_page_url=next_page)
 
     def parse_detail(self, html: str, url: str) -> DetailResult:
         junk = is_junk_page(html, url)
@@ -138,12 +182,16 @@ class ConfiguredOfficialAdapter(SourceAdapter):
                 "eligible countr", "open to", "international", "nationals",
                 "citizens of", "all countries",
             ))
+        title = extract_title(html)
+        generic = is_generic_info_page(title, fields)
+        if generic:
+            return DetailResult(title=title, fields=blank_fields(), skip=True, skip_reason=generic)
         requirement_text = " ".join(
             sentence for sentence in re.split(r"(?<=[.!?])\s+", text)
             if any(hint in sentence.lower() for hint in REQUIREMENT_SENTENCE_HINTS)
         )[:1200]
         return DetailResult(
-            title=extract_title(html),
+            title=title,
             fields=fields,
             requirement_text=requirement_text,
         )
@@ -161,6 +209,7 @@ PRIORITY_2_CONFIGS: tuple[AdapterConfig, ...] = (
         enabled=True,
         status_reason="Discovery index verified live; Global Professionals and Pioneering Women in STEM tracks listed. Work-experience and leadership requirements are captured as profile gaps, never assumed.",
         notes="Do not assume Benin eligibility without checking the current country list on the track page.",
+        record_path_hints=("global-professional", "pioneering", "sisgp"),
     ),
     AdapterConfig(
         source_id="finland",
@@ -221,6 +270,7 @@ PRIORITY_2_CONFIGS: tuple[AdapterConfig, ...] = (
         enabled=True,
         status_reason="Australia Awards Africa portal verified live with a Masters scholarship track for Africans from eligible countries.",
         notes="Verify the current eligible-country list and call; do not assume Benin is included.",
+        record_path_hints=("masters-scholarship", "award", "apply-for-an-award"),
     ),
     AdapterConfig(
         source_id="eiffel",

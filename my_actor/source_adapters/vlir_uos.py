@@ -38,6 +38,7 @@ from .base import (
     extract_text,
     extract_title,
     host_in_domains,
+    is_generic_info_page,
     is_junk_page,
 )
 from ..verification import extract_structured_fields
@@ -111,11 +112,15 @@ class VlirUosAdapter(SourceAdapter):
         return any(hint in lowered for hint in MASTER_PATH_HINTS)
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        from .base import matches_nav_anchor
+
         found: list[DiscoveryCandidate] = []
         seen: set[str] = set()
         for href, anchor in extract_links(html):
             absolute = absolutize(base_url, href)
             if not self.is_detail_url(absolute):
+                continue
+            if matches_nav_anchor(anchor):
                 continue
             if any(hint in anchor.lower() for hint in EXCLUDED_ANCHOR_HINTS):
                 continue
@@ -159,11 +164,15 @@ class VlirUosAdapter(SourceAdapter):
             sentence for sentence in re.split(r"(?<=[.!?])\s+", text)
             if "work experience" in sentence.lower() or "leadership" in sentence.lower()
         )[:1200]
+        title = extract_title(html)
+        generic = is_generic_info_page(title, fields)
+        if generic:
+            return DetailResult(title=title, fields=blank_fields(), skip=True, skip_reason=generic)
         notes = []
         if re.search(r"call .* (is now )?closed|applications are closed", text, re.I):
             notes.append("Official call status indicates a closed cycle; deadlines must be current to qualify.")
         return DetailResult(
-            title=extract_title(html),
+            title=title,
             fields=fields or blank_fields(),
             residence_countries=residence,
             requirement_text=requirement_text,

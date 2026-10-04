@@ -78,6 +78,8 @@ class MastercardAdapter(SourceAdapter):
         )
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        from .base import matches_nav_anchor
+
         found: list[DiscoveryCandidate] = []
         seen: set[str] = set()
         for href, anchor in extract_links(html):
@@ -85,6 +87,8 @@ class MastercardAdapter(SourceAdapter):
             if not absolute.lower().startswith(("http://", "https://")):
                 continue
             anchor_lower = anchor.lower()
+            if matches_nav_anchor(anchor):
+                continue
             if not any(hint in anchor_lower for hint in PARTNER_ANCHOR_HINTS) and not self.is_detail_url(absolute):
                 continue
             canonical = absolute.lower().rstrip("/")

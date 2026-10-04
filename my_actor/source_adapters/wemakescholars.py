@@ -27,6 +27,12 @@ from ..verification import extract_structured_fields
 
 WMS_DOMAINS = ("www.wemakescholars.com", "wemakescholars.com", "zeta.wemakescholars.com")
 SCHOLARSHIP_PATH_MARKERS = ("/scholarship/", "/scholarships/")
+# Index/filter pages that list scholarships but are not individual records.
+# Observed live: /university/<slug>/scholarships and
+# /scholarships-to-study-in-<country>-for-international-students are
+# server-rendered indexes; individual cards on the main listing are
+# AJAX-loaded, so only /scholarship/<slug> pages are real details.
+INDEX_PATH_HINTS = ("/university/", "scholarships-to-study-in-")
 
 
 def is_wms(url: str) -> bool:
@@ -35,11 +41,14 @@ def is_wms(url: str) -> bool:
 
 def is_scholarship_url(url: str) -> bool:
     parsed = urlparse(url)
-    return (
-        parsed.scheme in {"http", "https"}
-        and is_wms(url)
-        and any(marker in parsed.path.lower() for marker in SCHOLARSHIP_PATH_MARKERS)
-    )
+    if parsed.scheme not in {"http", "https"} or not is_wms(url):
+        return False
+    path = parsed.path.lower()
+    if not any(marker in path for marker in SCHOLARSHIP_PATH_MARKERS):
+        return False
+    if path.rstrip("/") in ("/scholarship", "/scholarships"):
+        return False
+    return not any(hint in path for hint in INDEX_PATH_HINTS)
 
 
 class WeMakeScholarsAdapter(SourceAdapter):
@@ -50,6 +59,9 @@ class WeMakeScholarsAdapter(SourceAdapter):
             source_type="reputable_aggregator",
             discovery_urls=(
                 "https://www.wemakescholars.com/Masters-scholarships-in-computer-sciences-and-information-technology-to-study-abroad",
+                # Server-rendered filtered search behind the listing page
+                # (its own inline script references this endpoint).
+                "https://www.wemakescholars.com/scholarship?study=3&interest=3",
             ),
             discovery_strategy="listing_then_detail",
             pagination="bounded_listing_links",

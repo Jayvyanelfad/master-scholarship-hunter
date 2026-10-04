@@ -138,6 +138,65 @@ def hostname(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
 
+# Anchor-text signals of site navigation, never of a scholarship record.
+# Applied by adapters when qualifying listing links. Deliberately narrow:
+# generic calls-to-action such as "read more" are NOT listed because real
+# programme links use them.
+NAV_ANCHOR_STOPLIST = (
+    "admissions", "cost of living", "cost and requirements", "fees and cost", "fees & cost",
+    "universities", "university list", "student stories", "plan your stay",
+    "after your studies", "all programmes", "all programs",
+    "find a programme", "find your programme", "find a program",
+    "search results", "view all", "see all", "bachelor", "doctoral", "phd",
+    "exchange", "contact us", "about us", "more resources",
+)
+
+
+def matches_nav_anchor(anchor: str) -> bool:
+    lowered = re.sub(r"\s+", " ", anchor or "").strip().lower()
+    return any(token in lowered for token in NAV_ANCHOR_STOPLIST)
+
+
+# Domain vocabulary proving an extracted field carries real evidence rather
+# than a label-echo artifact (for example "Funding" matched inside the
+# heading "Funding your studies").
+EVIDENCE_VOCAB = {
+    "degree": ("master", "phd", "bachelor", "doctor", "postgrad", "graduate", "diploma", "degree"),
+    "funding": ("tuition", "stipend", "living", "allowance", "grant", "award", "fund", "fee", "waiver", "scholarship", "cover", "month", "travel", "insurance", "accommodation", "eur", "usd", "jpy", "gbp", "chf", "\u20ac", "$", "\u00a3", "\u00a5"),
+    "nationality": ("benin", "countr", "nation", "citizen", "eligib", "international", "africa", "europe", "eea", "worldwide", "domicil", "resident", "applicant"),
+    "deadline": ("deadline", "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "202", "203"),
+}
+
+
+def field_has_substance(field_name: str, value: str) -> bool:
+    text = re.sub(r"\s+", " ", value or "").strip().lower()
+    if not text:
+        return False
+    return any(term in text for term in EVIDENCE_VOCAB.get(field_name, ()))
+
+
+def is_generic_info_page(title: str, fields: dict[str, str]) -> str:
+    """Return a reason when a page is generic info rather than a record.
+
+    A page may only become a scholarship record when it either names an
+    award/programme in its title or carries at least one structured evidence
+    field (degree, funding, nationality, or deadline). Informational shells
+    ("Funding your studies", "Study opportunities", "Finding
+    Scholarships") provide no record identity and must not become records;
+    they can still serve as listing pages that link to real records.
+    """
+    text = re.sub(r"\s+", " ", title or "").strip().lower()
+    substantive = any(
+        field_has_substance(key, fields.get(key, ""))
+        for key in ("degree", "funding", "nationality", "deadline")
+    )
+    if substantive:
+        return ""
+    if not text:
+        return "Non-record page (no title and no evidence)."
+    return f"Non-record informational page ({text[:80]})."
+
+
 def canonical_programme_url(url: str) -> str:
     """Identity URL with language variants collapsed (delegates to verification)."""
     from ..verification import canonical_url

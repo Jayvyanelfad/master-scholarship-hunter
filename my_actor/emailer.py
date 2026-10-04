@@ -259,6 +259,7 @@ def build_email_html(
                 f"{entry.get('discovered', 0)} candidates, "
                 f"{entry.get('official_fetched', 0)} official checked, "
                 f"{entry.get('strong_matches', entry.get('verified', 0))} strong, "
+                f"{entry.get('junk_skipped', 0)} skipped, "
                 f"{entry.get('errors', 0)} errors</li>"
                 for source_id, entry in source_health.items()
                 if isinstance(entry, dict)

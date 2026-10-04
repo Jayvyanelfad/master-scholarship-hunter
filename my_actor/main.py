@@ -7,10 +7,11 @@ import asyncio
 from apify import Actor, Event
 from crawlee.crawlers import BeautifulSoupCrawler
 
-from .pipeline import limit_diagnostic, plan_run, rejection_breakdown
+from .pipeline import build_limit_diagnostic, plan_run, rejection_breakdown
 from .routes import router
 from .routes import configure_routing
 from .routes import drain_final_records
+from .routes import get_requests_enqueued
 from .routes import get_requests_seen
 from .routes import get_source_health
 from .routes import reset_deduplication
@@ -21,6 +22,28 @@ DEFAULT_START_URL = (
     "https://www.wemakescholars.com/"
     "Masters-scholarships-in-computer-sciences-and-information-technology-to-study-abroad"
 )
+
+
+def _crawler_request_total(crawler: object) -> int:
+    """Best-effort read of the crawler's own request total.
+
+    Crawlee exposes final statistics (requests_finished/requests_total);
+    the exact attribute shape varies, so every access is defensive and a
+    missing counter simply reads as zero. Router-side enqueue accounting
+    remains the primary signal.
+    """
+    statistics = getattr(crawler, "statistics", None)
+    state = getattr(statistics, "state", statistics)
+    for name in ("requests_total", "requestsTotal", "total_requests"):
+        try:
+            value = getattr(state, name, None)
+        except Exception:
+            continue
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return int(value)
+    return 0
 
 
 async def main() -> None:
@@ -123,7 +146,13 @@ async def main() -> None:
 
         requests_completed = get_requests_seen()
         Actor.log.info(f"Requests completed: {requests_completed}")
-        crawling = limit_diagnostic(plan.scheduled_total, requests_completed, request_limit)
+        crawling = build_limit_diagnostic(
+            scheduled=plan.scheduled_total,
+            enqueued=get_requests_enqueued(),
+            completed=requests_completed,
+            limit=request_limit,
+            stats_total=_crawler_request_total(crawler),
+        )
         if crawling["request_limit_reached"]:
             Actor.log.warning(
                 f"Request limit reached ({request_limit}): the research set may be "
@@ -158,6 +187,9 @@ async def main() -> None:
             "strong_matches": sum(item.get("match_status") == "strong_match" for item in scholarship_items),
             "official_pages_checked": sum(entry.get("official_fetched", 0) for entry in health.values()),
             "source_errors": sum(entry.get("errors", 0) for entry in health.values()),
+            "discovery_pages_seen": sum(entry.get("pages_seen", 0) for entry in health.values()),
+            "candidate_records_discovered": sum(entry.get("stored", 0) for entry in health.values()),
+            "junk_pages_skipped": sum(entry.get("junk_skipped", 0) for entry in health.values()),
             "request_limit": crawling["request_limit"],
             "requests_scheduled": crawling["requests_scheduled"],
             "requests_completed": crawling["requests_completed"],
@@ -176,6 +208,7 @@ async def main() -> None:
                 f"possible_matches={entry.get('possible', 0)} "
                 f"strong_matches={entry.get('strong_matches', 0)} "
                 f"rejected={entry.get('rejected', 0)} "
+                f"junk_pages_skipped={entry.get('junk_skipped', 0)} "
                 f"errors={entry.get('errors', 0)} {entry.get('note', '')}".rstrip()
             )
             if not entry or not discovered:

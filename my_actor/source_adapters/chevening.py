@@ -82,11 +82,15 @@ class CheveningAdapter(SourceAdapter):
         return any(hint in lowered for hint in ELIGIBILITY_PATH_HINTS + COURSE_PATH_HINTS + ("scholarship",))
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        from .base import matches_nav_anchor
+
         found: list[DiscoveryCandidate] = []
         seen: set[str] = set()
         for href, anchor in extract_links(html):
             absolute = absolutize(base_url, href)
             if not self.is_detail_url(absolute):
+                continue
+            if matches_nav_anchor(anchor):
                 continue
             canonical = absolute.lower().rstrip("/")
             if canonical in seen:

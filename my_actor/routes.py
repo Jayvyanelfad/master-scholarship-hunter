@@ -38,6 +38,8 @@ _health = HealthTracker()
 _store = RecordStore()
 _stored_per_source: dict[str, int] = {}
 _requests_seen = 0
+_requests_enqueued = 0
+_pagination_used: dict[str, int] = {}
 _pending_by_official_url: dict[str, list["PendingDiscovery"]] = {}
 # Strings-only enqueueing cannot carry request metadata, so the source that
 # scheduled a detail URL is remembered here (canonical URL -> source_id).
@@ -65,8 +67,10 @@ def configure_routing(*, source_ids: list[str] | None = None, max_per_source: in
 
 
 def reset_deduplication() -> None:
-    global _requests_seen
+    global _requests_seen, _requests_enqueued
     _requests_seen = 0
+    _requests_enqueued = 0
+    _pagination_used.clear()
     _pending_by_official_url.clear()
     _enqueued_source.clear()
     _store.clear()
@@ -81,6 +85,16 @@ def get_source_health() -> dict[str, dict[str, object]]:
 def get_requests_seen() -> int:
     """Number of pages actually processed by the request handlers."""
     return _requests_seen
+
+
+def get_requests_enqueued() -> int:
+    """Number of requests scheduled through the router (seeds excluded)."""
+    return _requests_enqueued
+
+
+def _track_enqueued(count: int = 1) -> None:
+    global _requests_enqueued
+    _requests_enqueued += max(0, int(count))
 
 
 def _now() -> str:
@@ -225,6 +239,7 @@ def _store_evaluated(
     outcome = _store.store(key, record)
     if outcome in {"inserted", "upgraded"}:
         _stored_per_source[source_id] = _stored_per_source.get(source_id, 0) + 1
+        health.stored += 1
     status = str(result.get("match_status", ""))
     if verification_status == "verified":
         health.verified += 1
@@ -292,6 +307,7 @@ async def scholarship_handler(context: BeautifulSoupCrawlingContext) -> None:
     _health.record("wemakescholars", "WeMakeScholars").official_queued += 1
     # Crawlee requires URL strings here; association is held by canonical URL.
     await context.add_requests([official_url])
+    _track_enqueued(1)
     Actor.log.info(f"Official verification queued: {title[:80]} -> {official_url}")
 
 
@@ -323,6 +339,7 @@ async def adapter_listing_handler(context: BeautifulSoupCrawlingContext) -> None
         return
     health = _health.record(adapter.source_id, adapter.display_name)
     health.attempted += 1
+    health.pages_seen += 1
     try:
         html = str(context.soup)
         result = adapter.parse_listing(html, url)
@@ -336,11 +353,22 @@ async def adapter_listing_handler(context: BeautifulSoupCrawlingContext) -> None
             break
         try:
             await context.add_requests([candidate.url])
+            _track_enqueued(1)
             _enqueued_source[canonical_url(candidate.url)] = adapter.source_id
             queued += 1
         except Exception as error:
             _health.fail(adapter.source_id, adapter.display_name, f"Enqueue failed: {error}")
             break
+    # Pagination discovers more records; a pagination URL itself is never a
+    # scholarship record.
+    if result.next_page_url and _pagination_used.get(adapter.source_id, 0) < max(0, adapter.max_pages - 1):
+        try:
+            await context.add_requests([result.next_page_url])
+            _track_enqueued(1)
+            _pagination_used[adapter.source_id] = _pagination_used.get(adapter.source_id, 0) + 1
+            Actor.log.info(f"[Source: {adapter.source_id}] following results page.")
+        except Exception as error:
+            _health.fail(adapter.source_id, adapter.display_name, f"Pagination enqueue failed: {error}")
     health.discovered += queued
     Actor.log.info(f"[Source: {adapter.source_id}] discovered {queued} candidate(s) from listing.")
     if not queued:
@@ -354,6 +382,7 @@ async def adapter_detail_handler(context: BeautifulSoupCrawlingContext) -> None:
     if adapter is None:
         return
     health = _health.record(adapter.source_id, adapter.display_name)
+    health.pages_seen += 1
     try:
         detail = adapter.parse_detail(str(context.soup), url)
     except Exception as error:
@@ -361,6 +390,7 @@ async def adapter_detail_handler(context: BeautifulSoupCrawlingContext) -> None:
         Actor.log.warning(f"Source {adapter.source_id} detail failed for {url}: {error}")
         return
     if detail.skip:
+        health.junk_skipped += 1
         health.note = f"Skipped non-record page: {detail.skip_reason or url[:80]}"
         Actor.log.info(f"[Source: {adapter.source_id}] skipped non-record page: {url[:100]}")
         return
@@ -408,6 +438,7 @@ async def adapter_detail_handler(context: BeautifulSoupCrawlingContext) -> None:
             )
             health.official_queued += 1
             await context.add_requests([link])
+            _track_enqueued(1)
     Actor.log.info(f"[Source: {adapter.source_id}] detail processed: {detail.title[:80]}")
 
 
@@ -428,6 +459,7 @@ async def start_handler(context: BeautifulSoupCrawlingContext) -> None:
         absolute_url = urljoin(current_url, str(link.get("href") or ""))
         if is_scholarship_url(absolute_url):
             await context.add_requests([absolute_url])
+            _track_enqueued(1)
             found += 1
     Actor.log.info(f"Found {found} individual scholarship URL(s).")
 

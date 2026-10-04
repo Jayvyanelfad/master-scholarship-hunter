@@ -114,7 +114,7 @@ def analyze_funding(value: str, url: str, source_type: str) -> tuple[str, list[d
 
 def analyze_nationality(value: str, url: str, source_type: str) -> tuple[str, str, list[dict[str, str]]]:
     text, official = _norm(value), source_type.startswith("official_")
-    if any(term in text for term in ("indian nationals only", "indian citizens only", "only indian nationals", "only indian citizens", "only eu nationals", "eu nationals only", "only eu citizens", "eu citizens only", "australian citizens only", "canadian citizens only")):
+    if any(term in text for term in ("indian nationals only", "indian citizens only", "only indian nationals", "only indian citizens", "open to indian nationals", "only for indian nationals", "open to indian citizens", "open to all indian citizens", "only eu nationals", "eu nationals only", "only eu citizens", "eu citizens only", "australian citizens only", "canadian citizens only")):
         return "excluded", "high", [_evidence("Nationality rule excludes a Beninese citizen.", url, source_type, "high")]
     if "benin" in text or "beninese" in text:
         return "eligible", "high", [_evidence("The eligible-country rule explicitly includes Benin.", url, source_type, "high")]
@@ -126,7 +126,7 @@ def analyze_nationality(value: str, url: str, source_type: str) -> tuple[str, st
     if "all international students" in text:
         confidence = "high" if official else "medium"
         return "eligible", confidence, [_evidence("Rule explicitly covers all international students.", url, source_type, confidence)]
-    if any(term in text for term in ("african nationals", "sub-saharan african", "non-eu nationals", "non-eea", "outside the eea")):
+    if any(term in text for term in ("african nationals", "african countries", "sub-saharan african", "sub-saharan africa", "non-eu nationals", "non-eu applicants", "non-eea", "outside the eea")):
         confidence = "high" if official else "medium"
         return "eligible", confidence, [_evidence("Broad regional/development eligibility potentially covers a Beninese citizen; programme definition should be retained.", url, source_type, confidence)]
     if re.search(r"outside the eu(\/eea)?\b", text) or "non-eu/eea" in text or re.search(r"domicil\w* of origin outside", text):

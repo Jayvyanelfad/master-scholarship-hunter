@@ -22,17 +22,22 @@ class SourceHealth:
 
     ``verified`` counts records whose official evidence was merged
     (evidence-level verification). ``strong_matches`` counts records that
-    additionally passed every strict eligibility gate.
+    additionally passed every strict eligibility gate. ``pages_seen``
+    counts listing/detail pages processed; ``junk_skipped`` counts
+    non-record pages discarded before they could become records.
     """
 
     source_id: str
     display_name: str = ""
     attempted: int = 0
+    pages_seen: int = 0
     discovered: int = 0
     official_queued: int = 0
     official_fetched: int = 0
     verified: int = 0
     strong_matches: int = 0
+    stored: int = 0
+    junk_skipped: int = 0
     possible: int = 0
     rejected: int = 0
     errors: int = 0
@@ -43,11 +48,14 @@ class SourceHealth:
             "source_id": self.source_id,
             "display_name": self.display_name,
             "attempted": self.attempted,
+            "pages_seen": self.pages_seen,
             "discovered": self.discovered,
             "official_queued": self.official_queued,
             "official_fetched": self.official_fetched,
             "verified": self.verified,
             "strong_matches": self.strong_matches,
+            "stored": self.stored,
+            "junk_skipped": self.junk_skipped,
             "possible": self.possible,
             "rejected": self.rejected,
             "errors": self.errors,
@@ -252,20 +260,41 @@ def plan_run(
     )
 
 
-def limit_diagnostic(scheduled: int, completed: int, limit: int) -> dict[str, object]:
-    """Describe whether the crawler request limit truncated the run.
+def build_limit_diagnostic(
+    *,
+    scheduled: int,
+    enqueued: int,
+    completed: int,
+    limit: int,
+    stats_total: int = 0,
+) -> dict[str, object]:
+    """Decide whether the crawler request limit truncated the run.
 
-    ``completed`` counts pages actually processed; when it reaches ``limit``
-    while requests remain unscheduled/unprocessed, the research set was cut
-    short and the run must say so instead of silently reporting partial data.
+    ``enqueued`` counts every request the router scheduled (seeds plus
+    discovery/official follow-ups); ``completed`` counts pages the handlers
+    actually processed; ``stats_total`` is the crawler's own request total
+    when readable. Truncation means pages remained unprocessed *because of*
+    the cap: fewer pages completed than were known, while the cap was
+    plausibly binding (completed, enqueued, or crawler totals reached it).
+    A bare ``completed == limit`` comparison is not used, because failed
+    requests and shutdown behavior can shift the numbers either way.
     """
-    reached = completed >= limit and scheduled > completed
+    known_total = max(scheduled, enqueued, stats_total)
+    cap_binding = completed >= limit or stats_total >= limit or enqueued >= limit
+    reached = completed < known_total and cap_binding
     return {
         "request_limit": limit,
         "requests_scheduled": scheduled,
         "requests_completed": completed,
         "request_limit_reached": reached,
     }
+
+
+def limit_diagnostic(scheduled: int, completed: int, limit: int) -> dict[str, object]:
+    """Legacy wrapper kept for backwards compatibility; prefers the builder."""
+    return build_limit_diagnostic(
+        scheduled=scheduled, enqueued=scheduled, completed=completed, limit=limit
+    )
 
 
 def rejection_breakdown(items: list[dict[str, object]]) -> dict[str, int]:

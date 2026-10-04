@@ -27,7 +27,7 @@ OFFICIAL_LINK_TERMS = (
 FIELD_LABELS = {
     "degree": ("Eligible Degrees", "Degree", "Degree level"),
     "field": ("Eligible Courses", "Eligible Programs", "Eligible Programmes", "Field of study"),
-    "funding": ("Funding Type", "Funding", "Benefits", "Financial coverage"),
+    "funding": ("Scholarship Amount", "Scholarship Coverage", "Which costs are covered", "Funding Type", "Funding", "Benefits", "Financial coverage"),
     "nationality": ("Eligible Nationalities", "Eligible countries", "Nationality", "Who can apply"),
     "destination": ("Scholarship can be taken at", "Can Be Taken At", "Can be taken at", "Study At", "Study at", "Destination", "Country of study"),
     "deadline": ("Deadline", "Application deadline", "Closing date"),
@@ -35,6 +35,41 @@ FIELD_LABELS = {
     "provider": ("Provider", "Scholarship provider"),
     "application_location": ("Application location", "Residency requirement", "Applicant requirements", "Eligibility criteria"),
 }
+
+# Currency words mapped to codes so prose such as "1,400 euros per month"
+# uses the same vocabulary as symbol/code amounts. Meaning-preserving
+# canonicalization only; amounts and periods are never altered or invented.
+CURRENCY_WORDS = {
+    "euros": "EUR", "euro": "EUR", "dollars": "USD", "dollar": "USD",
+    "yen": "JPY", "pounds": "GBP", "pound": "GBP", "francs": "CHF",
+    "franc": "CHF", "krona": "SEK",
+}
+_CURRENCY_WORD_PATTERN = re.compile(
+    r"\b(euros?|dollars?|yen|pounds?|francs?|krona)\b", re.I
+)
+# Amount-first prose ("1,400 euros per month") reordered to code-first
+# ("EUR 1,400 per month") so monthly-support evidence uses one vocabulary.
+_AMOUNT_FIRST_PATTERN = re.compile(
+    r"([\d][\d,.\s]*(?:\s*[~\u2013\u2014\-–]|to\s+)?\s*[\d][\d,.]*)\s+(euros?|dollars?|yen|pounds?|francs?|krona)\b",
+    re.I,
+)
+
+
+def normalize_funding_prose(value: str) -> str:
+    """Canonicalize currency words to codes inside funding evidence text."""
+    if not value:
+        return value
+
+    def reorder(match: re.Match) -> str:
+        code = CURRENCY_WORDS.get(match.group(2).lower(), match.group(2))
+        return f"{code} {match.group(1).strip()}"
+
+    value = _AMOUNT_FIRST_PATTERN.sub(reorder, value)
+
+    def replace(match: re.Match) -> str:
+        return CURRENCY_WORDS.get(match.group(1).lower(), match.group(1))
+
+    return _CURRENCY_WORD_PATTERN.sub(replace, value)
 
 
 @dataclass(frozen=True)
@@ -145,6 +180,7 @@ def extract_structured_fields(text: str) -> dict[str, str]:
             if match:
                 fields[name] = re.sub(r"\s+", " ", match.group(1)).strip()
                 break
+    fields["funding"] = normalize_funding_prose(fields["funding"])
     return fields
 
 

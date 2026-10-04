@@ -33,6 +33,7 @@ from .base import (
     extract_text,
     extract_title,
     host_in_domains,
+    is_generic_info_page,
     is_junk_page,
 )
 from ..verification import extract_structured_fields
@@ -135,17 +136,25 @@ class DaadAdapter(SourceAdapter):
             return False
         if url.rstrip("/").lower() in {item.lower().rstrip("/") for item in DISCOVERY_URLS}:
             return False
+        lowered = url.lower()
         if self._is_navigation_url(url):
             return False
-        lowered = url.lower()
+        if "datenbank" in lowered:
+            # The scholarship database (including filtered variants) is a
+            # search interface, never a scholarship record.
+            return False
         return any(token in lowered for token in RECORD_PATH_TOKENS)
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        from .base import matches_nav_anchor
+
         found: list[DiscoveryCandidate] = []
         seen: set[str] = set()
         for href, anchor in extract_links(html):
             absolute = absolutize(base_url, href)
             if not self.is_detail_url(absolute):
+                continue
+            if matches_nav_anchor(anchor):
                 continue
             identity = canonical_programme_url(absolute)
             if identity in seen:
@@ -178,4 +187,8 @@ class DaadAdapter(SourceAdapter):
             fields["application_location"] = extract_evidence_sentences(text, APPLY_PROSE_KEYWORDS)
         if not fields["deadline"]:
             fields["deadline"] = extract_evidence_sentences(text, DEADLINE_PROSE_KEYWORDS)
-        return DetailResult(title=extract_title(html), fields=fields or blank_fields())
+        title = extract_title(html)
+        generic = is_generic_info_page(title, fields)
+        if generic:
+            return DetailResult(title=title, fields=blank_fields(), skip=True, skip_reason=generic)
+        return DetailResult(title=title, fields=fields or blank_fields())

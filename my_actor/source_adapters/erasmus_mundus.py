@@ -32,6 +32,7 @@ from .base import (
     extract_text,
     extract_title,
     host_in_domains,
+    is_generic_info_page,
     is_junk_page,
 )
 from ..verification import LinkCandidate, canonical_url, extract_structured_fields, select_official_url
@@ -114,6 +115,8 @@ class ErasmusMundusAdapter(SourceAdapter):
         return False
 
     def parse_listing(self, html: str, base_url: str) -> ListingResult:
+        from .base import matches_nav_anchor
+
         found: list[DiscoveryCandidate] = []
         seen: set[str] = set()
         for href, anchor in extract_links(html):
@@ -121,6 +124,8 @@ class ErasmusMundusAdapter(SourceAdapter):
             if not absolute.lower().startswith(("http://", "https://")):
                 continue
             if self._ignored(absolute, anchor):
+                continue
+            if matches_nav_anchor(anchor):
                 continue
             lowered = absolute.lower()
             anchor_lower = anchor.lower()
@@ -164,9 +169,18 @@ class ErasmusMundusAdapter(SourceAdapter):
             official = select_official_url(url, extract_title(html), candidates)
             if official and canonical_url(official).lower().rstrip("/") != canonical_url(url).lower().rstrip("/"):
                 follow.append(official)
+        title = extract_title(html)
+        if follow:
+            return DetailResult(
+                title=title,
+                fields=fields or blank_fields(),
+                follow_links=tuple(follow),
+                is_hop=True,
+            )
+        generic = is_generic_info_page(title, fields)
+        if generic:
+            return DetailResult(title=title, fields=blank_fields(), skip=True, skip_reason=generic)
         return DetailResult(
-            title=extract_title(html),
+            title=title,
             fields=fields or blank_fields(),
-            follow_links=tuple(follow),
-            is_hop=bool(follow),
         )
