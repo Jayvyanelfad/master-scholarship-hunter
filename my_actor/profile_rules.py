@@ -22,7 +22,7 @@ UNRELATED_FIELD_TERMS = ("education", "history", "law", "medicine", "nursing", "
 # the surrounding text uses word "scholarship". Checked before any positive
 # funding evidence so a denial is never overridden by a vague label.
 EXPLICIT_PARTIAL_TERMS = (
-    "tuition only", "tuition waiver only", "tuition fees only", "tuition fee only",
+    "tuition only", "only tuition fees", "only tuition fee", "tuition waiver only", "tuition fees only", "tuition fee only",
     "tuition discount", "partial tuition",
     "partial funding", "bursary", "accommodation only", "meal allowance", "small grant",
     "not a full-tuition scholarship", "not a full tuition scholarship",

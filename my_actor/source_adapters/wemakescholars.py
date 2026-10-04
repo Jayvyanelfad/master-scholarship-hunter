@@ -30,9 +30,9 @@ SCHOLARSHIP_PATH_MARKERS = ("/scholarship/", "/scholarships/")
 # Index/filter pages that list scholarships but are not individual records.
 # Observed live: /university/<slug>/scholarships and
 # /scholarships-to-study-in-<country>-for-international-students are
-# server-rendered indexes; individual cards on the main listing are
-# AJAX-loaded, so only /scholarship/<slug> pages are real details.
-INDEX_PATH_HINTS = ("/university/", "scholarships-to-study-in-")
+# server-rendered indexes; /scholarship/apply?... are application-portal
+# shells, not scholarship records.
+INDEX_PATH_HINTS = ("/university/", "scholarships-to-study-in-", "/scholarship/apply")
 
 
 def is_wms(url: str) -> bool:

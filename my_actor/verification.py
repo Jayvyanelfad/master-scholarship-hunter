@@ -122,12 +122,37 @@ def is_acceptable_official_link(url: str, discovery_url: str) -> bool:
     return _is_external_non_social(url, discovery_url)
 
 
+GENERIC_PROVIDER_WORDS = {
+    "university", "universities", "scholarship", "scholarships", "foundation",
+    "school", "schools", "college", "colleges", "institute", "institutes",
+    "program", "programmes", "programs", "programme", "department",
+    "faculty", "ministry", "government", "service", "services", "office",
+    "agency", "council", "board", "trust", "fund",
+}
+
+
+def _provider_terms(provider: str) -> list[str]:
+    return [
+        term for term in re.findall(r"[a-z0-9]{4,}", (provider or "").lower())
+        if term not in GENERIC_PROVIDER_WORDS
+    ]
+
+
 def _score_candidate(candidate: LinkCandidate, provider: str) -> int:
     text = re.sub(r"\s+", " ", candidate.text).strip().lower()
     score = 0
     for index, term in enumerate(OFFICIAL_LINK_TERMS):
         if term in text:
             score = max(score, 100 - index)
+    if not score:
+        # Provider-name anchors ("Awarded by <Vanderbilt University>") are
+        # the standard outbound pattern on aggregator detail pages: the
+        # page itself attributes the scholarship to that provider, so its
+        # external programme page is an explicitly linked official page.
+        # Generic anchors ("Read more", "More info") never qualify here.
+        provider_terms = _provider_terms(provider)
+        if provider_terms and any(term in text for term in provider_terms):
+            score = 50
     if not score:
         return 0
     provider_terms = [term for term in re.findall(r"[a-z0-9]{4,}", provider.lower()) if term not in {"university", "scholarship"}]
@@ -164,14 +189,27 @@ def official_source_type(url: str) -> str:
     return "official_program"
 
 
+def _boundary_pattern() -> str:
+    # Complete known labels match atomically (longest first), so a value
+    # ending before "Eligibility criteria:" terminates there instead of
+    # swallowing it. Anything else terminates only on a bare keyword that
+    # behaves like a new label, with interstitial words that are not
+    # themselves label words (so "the online application portal
+    # Deadline:" cuts at "Deadline:", not at "application").
+    atomic = sorted(
+        {label for labels in FIELD_LABELS.values() for label in labels},
+        key=len, reverse=True,
+    )
+    atomic_alt = "|".join(re.escape(label) for label in atomic)
+    keywords = r"Eligible|Eligibility|Funding|Deadline|Application|Provider|Scholarship can be taken|Can be taken|Study at|Overview|Details|Benefits|Requirements|Country of study|Minimum|Degree|Field of study|Residency"
+    label_words = r"Eligible|Eligibility|Funding|Deadline|Application|Provider|Scholarship|Can|Taken|Study|Overview|Details|Benefits|Requirements|Country|Minimum|Degree|Field|Residency|Nationalities|Nationality|Degrees|Courses|Programs|Programmes|Type|Location|Criteria|Date|Amount|Coverage|Costs|Covered"
+    return rf"(?=\s+(?:{atomic_alt})\s*:|\s+(?:{keywords})(?:\s+(?!(?:{label_words})\b)[A-Za-z]+){{0,2}}\s*:|\s*$)"
+
+
 def extract_structured_fields(text: str) -> dict[str, str]:
     """Extract only labelled source fields from flattened page text."""
     text = re.sub(r"\s+", " ", text).strip()
-    # A boundary keyword only terminates a value when it behaves like a new
-    # label (the keyword plus at most two words, then a colon) or at the end
-    # of the text. This prevents in-value phrases such as "eligible for
-    # admission" or "Africans from eligible countries" from cutting evidence.
-    boundaries = r"(?=\s+(?:Eligible|Eligibility|Funding|Deadline|Application|Provider|Scholarship can be taken|Can be taken|Study at|Overview|Details|Benefits|Requirements|Country of study|Minimum|Degree|Field of study|Residency)(?:\s+[A-Za-z]+){0,2}\s*:|\s*$)"
+    boundaries = _boundary_pattern()
     fields: dict[str, str] = {}
     for name, labels in FIELD_LABELS.items():
         fields[name] = ""

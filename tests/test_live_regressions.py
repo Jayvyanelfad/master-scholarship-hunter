@@ -104,6 +104,22 @@ class DiscoveryPrecisionTests(unittest.TestCase):
         self.assertTrue(adapter.is_listing_url(url))
         self.assertIn(url, adapter.discovery_urls)
 
+    def test_wms_detail_and_apply_links_classified(self):
+        from my_actor.source_adapters.wemakescholars import is_scholarship_url
+
+        adapter = adapter_by_id("wemakescholars")
+        html = (
+            '<html><body>'
+            '<a href="/scholarship/vanderbilt-university-scholarship?utm_source=web">More Details</a>'
+            '<a href="/scholarship/apply?sch_id=8907">Check Eligibility</a>'
+            "</body></html>"
+        )
+        result = adapter.parse_listing(html, "https://www.wemakescholars.com/scholarship?study=3&interest=3")
+        self.assertEqual(len(result.candidates), 1)
+        self.assertIn("vanderbilt-university-scholarship", result.candidates[0].url)
+        self.assertTrue(is_scholarship_url("https://www.wemakescholars.com/scholarship/vanderbilt-university-scholarship"))
+        self.assertFalse(is_scholarship_url("https://www.wemakescholars.com/scholarship/apply?sch_id=8907"))
+
 
 class FundingNormalizationTests(unittest.TestCase):
     def test_fully_funded_alone_is_unknown(self):

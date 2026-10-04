@@ -175,11 +175,14 @@ class AdapterDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["degree_match"], "excluded")
         self.assertEqual(result["match_status"], "rejected")
 
-    def test_australia_awards_can_be_strong_with_full_evidence(self):
+    def test_australia_current_round_text_is_not_a_cs_strong_match(self):
+        # Grounded in the verified Types of Awards page: the current round
+        # lists priority areas without computing, so a CS profile cannot
+        # reach strong_match from this page. Documented, not fabricated.
         _, result = evaluate_detail(
             "australia", "australia_detail.html", "https://www.australiaawardsafrica.org/"
         )
-        self.assertEqual(result["match_status"], "strong_match")
+        self.assertNotEqual(result["match_status"], "strong_match")
 
     def test_erasmus_overview_resolves_programme_without_stub_record(self):
         adapter = adapter_by_id("erasmus_mundus")
