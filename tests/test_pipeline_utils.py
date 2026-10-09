@@ -90,7 +90,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("No verified strong matches this run", html)
         self.assertIn("Sources checked", html)
         self.assertIn("DAAD", html)
-        self.assertIn("Rejection reasons", html)
+        self.assertIn("Rejected summary", html)
         self.assertIn("Non-Master", html)
 
     def test_strong_match_email_still_restricted(self):

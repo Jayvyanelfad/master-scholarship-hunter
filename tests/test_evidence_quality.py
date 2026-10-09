@@ -195,7 +195,7 @@ class HealthMetricTests(unittest.TestCase):
         for expected in (
             "Candidates Discovered", "85", "Official Pages Checked", "73",
             "Possible Matches", "81", "Sources checked", "DAAD",
-            "Rejection reasons", "Funding Unknown", "83",
+            "Rejected summary", "Funding Unknown", "83",
         ):
             self.assertIn(expected, html)
 
