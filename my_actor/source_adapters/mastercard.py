@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 
 from .base import (
+    fill_prose_evidence,
     DiscoveryCandidate,
     DetailResult,
     ListingResult,
@@ -118,6 +119,7 @@ class MastercardAdapter(SourceAdapter):
             return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(text)
+        fields = fill_prose_evidence(fields, text, extract_title(html))
         if not fields["funding"]:
             fields["funding"] = extract_evidence_sentences(text, (
                 "tuition fees", "accommodation", "stipend", "financial support",

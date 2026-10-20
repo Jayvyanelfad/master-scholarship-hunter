@@ -186,6 +186,16 @@ def is_generic_info_page(title: str, fields: dict[str, str]) -> str:
     they can still serve as listing pages that link to real records.
     """
     text = re.sub(r"\s+", " ", title or "").strip().lower()
+    # Navigation/overview titles remain non-records even when the page body
+    # mentions funding or eligibility in general terms.
+    generic_titles = (
+        "finding scholarships", "funding your studies", "study opportunities",
+        "scholarships", "scholarship search", "search results",
+        "course catalogue", "course catalog", "programme catalogue",
+        "program catalogue", "financial aid", "funding opportunities",
+    )
+    if any(text == item or text.startswith(item + " |") for item in generic_titles):
+        return f"Non-record informational page ({text[:80]})."
     substantive = any(
         field_has_substance(key, fields.get(key, ""))
         for key in ("degree", "funding", "nationality", "deadline")
@@ -259,6 +269,72 @@ def extract_evidence_sentences(text: str, keywords: tuple[str, ...], max_chars: 
                 break
     return " ".join(picked)
 
+
+
+# Shared, verbatim prose fallbacks used when a source does not expose stable
+# labelled fields. These are deliberately evidence extraction only: they never
+# manufacture a destination, funding claim, nationality, or deadline.
+PROSE_FIELD_KEYWORDS = {
+    "degree": (
+        "master's programme", "master's program", "master programme", "master program",
+        "master's degree", "masters degree", "master degree", "MSc", "M.Sc.",
+    ),
+    "field": (
+        "computer science", "information technology", "informatics",
+        "software engineering", "computer engineering", "artificial intelligence",
+        "machine learning", "deep learning", "data science", "data engineering",
+        "cybersecurity", "cyber security", "information security", "robotics",
+        "computer vision", "natural language processing", "computing",
+    ),
+    "funding": (
+        "tuition", "fee waiver", "stipend", "living expenses", "living allowance",
+        "monthly allowance", "fully funded", "participation costs", "financial coverage",
+    ),
+    "nationality": (
+        "Benin", "Beninese", "all nationalities", "all countries", "all over the world",
+        "international applicants", "international students", "African countries",
+        "African applicants", "Sub-Saharan", "non-EU", "non-EEA", "eligible countries",
+        "citizens of", "nationals of",
+    ),
+    "application_location": (
+        "apply from abroad", "applications from outside", "international applicants may apply",
+        "apply online", "application portal", "embassy recommendation",
+        "must reside", "currently residing", "already enrolled",
+    ),
+    "deadline": (
+        "application deadline", "deadline is", "apply by", "applications close",
+        "closing date", "applications must be submitted by", "deadline:",
+    ),
+}
+
+
+def fill_prose_evidence(fields: dict[str, str], text: str, title: str = "") -> dict[str, str]:
+    """Fill only empty evidence fields from short, verbatim official-page prose.
+
+    Programme title is a valid source for explicit degree/subject terms. For
+    body evidence, sentences must be short and contain field-specific terms;
+    future application opening dates are not treated as deadlines.
+    """
+    result = dict(fields or blank_fields())
+    body = re.sub(r"\s+", " ", text or "").strip()
+    heading = re.sub(r"\s+", " ", title or "").strip()
+
+    if not result.get("degree") and heading and any(
+        re.search(rf"\b{re.escape(term)}\b", heading, re.I)
+        for term in ("master", "master's", "masters", "MSc", "M.Sc.")
+    ):
+        result["degree"] = heading
+
+    if not result.get("field") and heading and any(
+        term.lower() in heading.lower() for term in PROSE_FIELD_KEYWORDS["field"]
+    ):
+        result["field"] = heading
+
+    for key, keywords in PROSE_FIELD_KEYWORDS.items():
+        if result.get(key):
+            continue
+        result[key] = extract_evidence_sentences(body, tuple(keywords), max_chars=600)
+    return result
 
 def host_in_domains(url: str, domains: tuple[str, ...]) -> bool:
     host = hostname(url)

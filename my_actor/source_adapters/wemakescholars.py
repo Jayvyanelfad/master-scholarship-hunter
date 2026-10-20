@@ -12,6 +12,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from .base import (
+    fill_prose_evidence,
     DiscoveryCandidate,
     DetailResult,
     ListingResult,
@@ -101,5 +102,7 @@ class WeMakeScholarsAdapter(SourceAdapter):
         junk = is_junk_page(html, url)
         if junk:
             return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
-        fields = extract_structured_fields(extract_text(html))
+        text = extract_text(html)
+        fields = extract_structured_fields(text)
+        fields = fill_prose_evidence(fields, text, extract_title(html))
         return DetailResult(title=extract_title(html), fields=fields or blank_fields())

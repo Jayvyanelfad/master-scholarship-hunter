@@ -8,7 +8,7 @@
     "buildTag": "latest",
     "meta": {
         "templateId": "python-crawlee-beautifulsoup",
-        "generatedBy": "OpenCode with Muse Spark"
+        "generatedBy": "OpenCode with DeepSeek V4.1 Flash Free"
     },
     "inputSchema": "./input_schema.json",
     "outputSchema": "./output_schema.json",

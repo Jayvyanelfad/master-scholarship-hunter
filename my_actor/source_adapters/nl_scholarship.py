@@ -12,6 +12,7 @@ source ever yields a strong_match, the funding rules have regressed.
 from __future__ import annotations
 
 from .base import (
+    fill_prose_evidence,
     DetailResult,
     ListingResult,
     SourceAdapter,
@@ -61,7 +62,9 @@ class NlScholarshipAdapter(SourceAdapter):
         junk = is_junk_page(html, url)
         if junk:
             return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
-        fields = extract_structured_fields(extract_text(html))
+        text = extract_text(html)
+        fields = extract_structured_fields(text)
+        fields = fill_prose_evidence(fields, text, extract_title(html))
         if not fields["destination"]:
             fields["destination"] = self.destination
         return DetailResult(title=extract_title(html), fields=fields or blank_fields())

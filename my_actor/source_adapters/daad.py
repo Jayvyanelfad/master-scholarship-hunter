@@ -21,6 +21,7 @@ import re
 from urllib.parse import urlparse
 
 from .base import (
+    fill_prose_evidence,
     DiscoveryCandidate,
     DetailResult,
     ListingResult,
@@ -177,6 +178,7 @@ class DaadAdapter(SourceAdapter):
             return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(self.normalize_daad_text(text))
+        fields = fill_prose_evidence(fields, text, extract_title(html))
         if not fields["destination"]:
             fields["destination"] = self.destination
         if not fields["funding"]:

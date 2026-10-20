@@ -19,6 +19,7 @@ Single official programme page (verified live on hea.ie). Verified facts:
 from __future__ import annotations
 
 from .base import (
+    fill_prose_evidence,
     DetailResult,
     ListingResult,
     SourceAdapter,
@@ -71,6 +72,7 @@ class GoiIesAdapter(SourceAdapter):
             return DetailResult(title=extract_title(html), fields=blank_fields(), skip=True, skip_reason=junk)
         text = extract_text(html)
         fields = extract_structured_fields(text)
+        fields = fill_prose_evidence(fields, text, extract_title(html))
         if not fields["destination"]:
             fields["destination"] = self.destination
         if not fields["funding"]:
