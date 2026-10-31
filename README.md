@@ -1,119 +1,60 @@
-# Master Scholarship Hunter
+# 🎓 Master Scholarship Hunter
 
-An Apify Actor for evidence-first scholarship research for one fixed profile:
-a Beninese citizen currently studying in India, seeking a fully funded Master's
-degree in Computer Science, IT, AI, or a closely related computing field.
+**Discover. Verify. Qualify.**
 
-It is deliberately a precision-oriented research tool, not a claim to search
-every scholarship worldwide. Discovery is handled by an expandable
-adapter registry (`my_actor/source_adapters/`): one small adapter per
-source defines its discovery URLs, listing/detail parsing, official
-domains, and source-specific rules on top of shared evidence
-normalization. For an explicitly labelled external application,
-official-website, programme, or admissions link, it fetches the linked source,
-keeps its evidence separate, and evaluates the official evidence first.
+Master Scholarship Hunter is an automated, evidence-first scholarship research platform built to discover and evaluate fully funded Master's scholarship opportunities across multiple international sources.
 
-## What qualifies as a strong match
+Powered by Python, Apify, Crawlee, and BeautifulSoup, it searches scholarship databases, university websites, government programmes, and official funding portals.
 
-An item is a `strong_match` only when all hard gates pass:
+Unlike basic scholarship aggregators, it does not simply collect scholarship titles and label them as opportunities. It evaluates each opportunity against a strict eligibility profile and requires official evidence before recommending a scholarship.
 
-- Master's eligibility is explicit.
-- The scholarship itself supports a target computing field.
-- Benefits explicitly cover both tuition and living expenses or a stipend.
-- Benin is eligible through an explicit country list or a clearly applicable
-  broad official rule.
-- The structured destination is one of the target countries.
-- The rules explicitly permit applying from abroad; a local-residency or
-  already-enrolled requirement excludes the item.
-- A deadline is active or upcoming.
-- The evidence comes from an official government, programme, university, or
-  document source (`verification_status: verified`).
+### 🎯 Project Mission
 
-`fully funded` alone does not verify funding. An unclear requirement produces
-`possible_match`, never a strong match. WMS remains a discovery source: it is
-verified only after a qualified official page is fetched and analysed.
+Help identify genuinely accessible, fully funded international Master's opportunities in:
 
-## Input
+- Computer Science
+- Artificial Intelligence and Machine Learning
+- Software Engineering
+- Data Science and Data Engineering
+- Cybersecurity
+- Information Technology
+- Robotics and related computing disciplines
 
-- `start_urls` (optional): Direct programme pages or supported discovery
-  listing URLs. When omitted, the Actor starts with the configured
-  WeMakeScholars Master's computing listing.
-- `sources` (optional): Source ids to crawl (`wemakescholars`,
-  `erasmus_mundus`, `daad`, `vlir_uos`, `chevening`, `goi_ies`, `mext`,
-  `mastercard_foundation`, `nl_scholarship`, `si_sweden`, `finland`,
-  `norway`, `switzerland`, `austria`, `australia`). Use `["all"]` for every
-  known source. When omitted, all enabled production sources are used.
-  A failing source logs its error and never crashes the run.
-- `max_results_per_source` (default `50`): Bounded discovery cap per source.
-- `verify_official` (default `true`): Follow official links and merge
-  official evidence. Disable only for debugging discovery.
-- `max_requests_per_crawl` (default `300`): Maximum discovery/verification
-  pages processed in one run. Must cover all discovery plus official
-  verification requests (about 200 for the default 15-source run). The run
-  logs `Request limit`, `Requests scheduled`, and `Requests completed`, and
-  emits a `request_limit_reached` diagnostic instead of silently truncating.
+### 🔍 Core Capabilities
 
-No credentials are supplied through Actor input. SMTP settings use
-`GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, and `EMAIL_TO` environment variables.
+- Multi-source scholarship discovery.
+- Official programme and application-page verification.
+- Master's degree eligibility analysis.
+- Full tuition and living-support verification.
+- Nationality and residency eligibility checks.
+- Destination-country validation.
+- Application deadline tracking.
+- Duplicate detection and source consolidation.
+- Automated email reporting.
+- Evidence-based match classification.
 
-## Output
+### 🛡️ Evidence-First Matching
 
-Each dataset item preserves extracted source fields and includes:
+Every opportunity passes through strict eligibility checks.
 
-- identity and provenance: `title`, `discovery_url`, `official_url`,
-  `canonical_url`, source domains/types, and `verification_status`;
-- decisions and evidence for degree, field, funding, nationality, destination,
-  application location, and deadline;
-- `match_status` (`strong_match`, `possible_match`, or `rejected`),
-  `recommendation`, reasons, warnings, and the profile rule version.
+A scholarship is recommended only when the available official evidence confirms all required conditions.
 
-Every evidence item is an object with `claim`, `source_url`, `source_type`, and
-`confidence`. The Actor does not invent missing eligibility facts.
+Unknown information is never automatically treated as eligibility.
 
-## Email behavior
+### ⚙️ Technology Stack
 
-Gmail SMTP is preserved. The emailer sends recommendations only where both
-`recommendation == "include"` and `match_status == "strong_match"`.
-When there are no strong matches, it sends “No verified strong matches this
-run” with run diagnostics for discovered, verified, rejected, possible,
-expired, and unknown-evidence records, plus a per-source breakdown
-(discovered / official checked / verified / errors) and the top rejection
-reasons, so an empty run is debuggable.
+- Python
+- Apify Actors
+- Crawlee
+- BeautifulSoup
+- HTML parsing and web scraping
+- SMTP email notifications
+- Automated testing with Python unittest
 
-## Local development
+### 🌍 Research Coverage
 
-```bash
-apify validate-schema
-apify run
-python -m unittest discover -s tests -v
-```
+The system includes adapters for multiple scholarship discovery sources, including Erasmus Mundus, DAAD, VLIR-UOS, Chevening, MEXT, Mastercard Foundation, Government of Ireland scholarships, and other national scholarship programmes.
 
-For a local Actor run, place input in
-`storage/key_value_stores/default/INPUT.json`. Results are written to the local
-default dataset. Local storage is not uploaded to Apify Console.
+### 🚀 Vision
 
-## Source coverage and limitations
-
-`my_actor/sources.py` is an explicit registry derived from real adapters in
-`my_actor/source_adapters/`. Discovery adapters exist for WeMakeScholars,
-Erasmus Mundus, DAAD, VLIR-UOS, Chevening, Government of Ireland (GOI-IES),
-MEXT, Mastercard Foundation, NL Scholarship, Swedish Institute, Finland,
-Norway, Switzerland (ESKAS), Austria (OeAD), and Australia Awards Africa.
-Eiffel/Campus France, Canada (EduCanada), Denmark, Luxembourg, and Singapore
-stay disabled with documented reasons because no discovery URL could be
-verified for them (unreachable domains or 404s after site migrations); no
-guessed URLs are used. The NL Scholarship (EUR 5,000, explicitly not
-full-tuition) is a deliberate control case proving discovery and strict
-filtering are separate: it is discovered, then rejected.
-
-Cross-source deduplication keys on the canonical official URL, so one
-scholarship found via several sources yields one record with merged
-provenance. Language variants of one programme page share one canonical
-identity. Every run logs per-source health (`discovered`,
-`official_pages_checked`, `evidence_verified`, `possible_matches`,
-`strong_matches`, `rejected`, `errors`); non-record pages (language
-selectors, cookie walls, navigation shells) are skipped without creating
-records.
-
-The normal pipeline is discovery, normalization, deduplication, structured
-extraction, official-link verification, evidence analysis, and final gating.
+Build a reliable, intelligent scholarship research engine that reduces the time spent searching through irrelevant opportunities and helps students focus on scholarships they can genuinely qualify for.
