@@ -3,7 +3,7 @@
     "actorSpecification": 1,
     "name": "master-scholarship-hunter",
     "title": "Master Scholarship Hunter",
-    "description": "Automated multi-source scholarship discovery and official eligibility verification for fully funded international Master's programmes in Computer Science, AI, IT, and related computing fields. Uses evidence-based matching to assess degree level, tuition and living coverage, nationality, residency, destination, and deadlines. Designed for a Beninese applicant currently studying in India. Sends detailed email reports with verified matches, promising candidates requiring verification, and rejection explanations.",
+    "description": "An automated opportunity discovery and verification platform that finds fully funded international Master's scholarships, internships, graduate programmes, and entry-level jobs in Computer Science, Artificial Intelligence, Machine Learning, Software Engineering, Data Science, IT, and related fields. Uses evidence-based matching to evaluate eligibility, funding, skills, experience, location, work authorization, application requirements, and deadlines. Designed around a Beninese applicant currently studying in India. Delivers personalized email reports with verified opportunities, promising candidates requiring further review, and clear rejection explanations.",
     "version": "0.0",
     "buildTag": "latest",
     "meta": {
